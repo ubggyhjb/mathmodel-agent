@@ -1,0 +1,219 @@
+% !TEX program = xelatex
+% =============================================================================
+%  全国大学生数学建模竞赛（CUMCM）LaTeX 模板
+%  对应 Typst 模板 zh/cumcm/main.typ 的全部功能。
+%
+%  字体依赖（正文宋体 / 标题黑体 / 强调楷体）：
+%    - 按本机字体自动选择：Windows 用 SimSun（宋体）/SimHei（黑体）/KaiTi（楷体）；
+%      macOS 自动回退 Songti SC / Heiti SC / Kaiti SC（fontset=none + 下方显式定义）。
+%    - 西文正文：Times New Roman；代码等宽：Menlo（缺失时回退到默认字体）。
+%  编译方式：xelatex main.tex （需运行两遍以生成目录）
+% =============================================================================
+\documentclass[fontset=none, 12pt, a4paper]{ctexart}
+
+% ---------- 页面：A4，边距按官方优秀论文实证（左 2.9cm/上 2.8cm 中位，2026 规范要求 ≥2.5cm） ----------
+\usepackage[a4paper, top=2.8cm, bottom=2.8cm, left=3cm, right=3cm]{geometry}
+
+% ---------- 断行救急：防止行内不可断 token（代码路径/编号/±20% 串）硬越界 ----------
+% ctex 中文两端对齐的字符间胶水是刚性的，行尾挤不下不可断 token 时 LaTeX 会硬凸出行宽；
+% \emergencystretch 给断行器 2em 额外弹性，在判定 overfull 前先收紧相邻行。零副作用。
+% 对超出 2em 的巨型 token（如 P0393/P0526 这类长编号串、长代码路径），写作时手动插断点：
+%   $\{P0393,\allowbreak P0526\}$、\texttt{code/}\allowbreak 目录
+\emergencystretch=2em
+
+% ---------- 数学 ----------
+\usepackage{amsmath}
+
+% ---------- 字体（fontspec + ctex，xelatex 编译） ----------
+% 中文宋体/黑体/楷体按本机字体自动选择：Windows → SimSun/SimHei/KaiTi，
+% macOS 回退 Songti SC/Heiti SC/Kaiti SC（fontset=none，由下方显式定义 \songti/\heiti/\kaishu）。
+\IfFontExistsTF{SimSun}{\setCJKmainfont{SimSun}}{\setCJKmainfont{Songti SC}}
+\IfFontExistsTF{SimSun}{\newCJKfontfamily\songti{SimSun}}{\newCJKfontfamily\songti{Songti SC}}
+\IfFontExistsTF{SimHei}{\newCJKfontfamily\heiti{SimHei}}{\newCJKfontfamily\heiti{Heiti SC}}
+\IfFontExistsTF{KaiTi}{\newCJKfontfamily\kaishu{KaiTi}}{\newCJKfontfamily\kaishu{Kaiti SC}}
+% 西文正文与代码等宽字体：
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
+\IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{}
+
+% ---------- 正文：12.05pt，首行缩进 2em，两端对齐 ----------
+% 行距实证：官方优秀论文行距/字号比 1.30-1.42（2023 年中位 1.42）；
+% \linespread 1.25 => 行距比 ≈ 1.50，介于官方与舒适度之间
+\linespread{1.25}
+\setlength{\parindent}{2em}
+
+% ---------- 标题编号（\ctexset 配置） ----------
+% 一级标题用中文数字“一、二、三、”，二级及以下用 1.1 / 1.1.1
+\ctexset{
+  section/number       = \chinese{section},
+  subsection/number    = \arabic{section}.\arabic{subsection},
+  subsubsection/number = \arabic{section}.\arabic{subsection}.\arabic{subsubsection},
+}
+
+% ---------- 标题格式（titlesec 配置） ----------
+\usepackage{titlesec}
+\titleformat{\section}
+  {\centering\fontsize{17.3pt}{20.8pt}\heiti\bfseries}
+  {\chinese{section}、}{1em}{}
+\titleformat{\subsection}
+  {\fontsize{14.45pt}{17.4pt}\heiti\bfseries}
+  {\arabic{section}.\arabic{subsection}}{1em}{}
+\titleformat{\subsubsection}
+  {\fontsize{12.05pt}{14.5pt}\heiti\bfseries}
+  {\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}{1em}{}
+\titlespacing{\section}       {0pt}{1.25em}{0.82em}
+\titlespacing{\subsection}    {0pt}{1.15em}{0.55em}
+\titlespacing{\subsubsection} {0pt}{1.15em}{0.55em}
+
+% 2026 格式规范：不要目录 → 本模板无目录页
+
+% ---------- 表格与代码 ----------
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{black!3},
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{black!30},
+  framerule=0.8pt,
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+}
+
+% ---------- 页码：底部居中 ----------
+\pagestyle{plain}
+
+% ---------- 自定义命令（对应 Typst 函数） ----------
+% \papertitle{标题}：居中 17.3pt 加粗标题
+\newcommand{\papertitle}[1]{%
+  \begin{center}
+    {\fontsize{17.3pt}{22pt}\bfseries #1}
+  \end{center}
+  \vspace{1em}
+}
+% \abstractcn{摘要正文}{关键词}：居中“摘要”标题（14pt 黑体）+ 正文 + “关键词：”黑体 + 关键词 + 换页
+% 2026 规范：摘要页（标题+摘要+关键词）为第 1 页，页码“1”页脚居中
+% 注意：标题必须用 \centering + \par，不能用 center 环境——center 的 trivlist 钩子会吞掉正文首段缩进。
+\newcommand{\abstractcn}[2]{%
+  \setcounter{page}{1}%
+  \vspace{0.5em}%
+  {\centering\fontsize{14pt}{17pt}\heiti\bfseries 摘要\par}%
+  \vspace{0.5em}%
+  {\sloppy #1\par}%
+  \vspace{1em}
+  {\heiti\bfseries 关键词：}#2\par
+  \newpage
+}
+% \kw{...}：内容性加粗（黑体）。官方展示论文通行做法，优先级 = 结论句 > 模型/方法名 > 引导语 > 关键数值
+% （全库统计：结论句 78 > 数值 51 > 术语 40 > 引导语 9）：
+%   正确：\kw{仅到达 27 个端点}、\kw{绕行无水备选路线}、\kw{早一分钟通知带来非线性安全收益}
+%   错误：把一串裸数字逐个加粗（\kw{15.88}、\kw{12.17}、\kw{18.10}）——全加粗=没加粗
+% 关键数值必须包进结论短语整体加粗，每问 ≤2 处；摘要加粗率 5-15%；正文关键结论句密度 1-4%。
+% 自查：删掉某个加粗后句意不受损，它就不该加粗。只用于内容强调，标题/标签不要用 \kw。
+\newcommand{\kw}[1]{\textbf{#1}}
+% \referencescn：参考文献节（不带编号，无目录）
+\newcommand{\referencescn}{%
+  \input{references}%
+}
+% \appendixcn：附录 B 源程序代码（2026 规范第五条：附录必须含建模用到的全部完整、可运行源码，
+% 不是"核心代码摘录"；程序不能运行或运行结果与论文不符可能取消评奖资格）
+\newcommand{\appendixcn}{%
+  \section*{附录 B\quad 源程序代码}%
+  \input{sections/A_code}%
+}
+% \supportfilescn：附录 A 支撑材料文件列表（2026 规范第十一条 + AI 规定第 4 条，与支撑材料 ZIP 一一对应）
+\newcommand{\supportfilescn}{%
+  \section*{附录 A\quad 支撑材料文件列表}%
+  支撑材料已按《全国大学生数学建模竞赛论文格式规范（2026 年修订稿）》压缩为单个 ZIP 文件，内容如下：\par
+  \threelinetable{支撑材料文件列表}{cll}{序号 & 文件 & 说明}{%
+    1 & code/*.py & 全部可运行源程序（问题一至问题四） \\%
+    2 & results/*.json & 全部结果数据 \\%
+    3 & figures/*.pdf & 论文图表矢量源文件 \\%
+    4 & data\_sources.md、external\_data.json & 自主查阅使用的数据资料（赛题原始数据除外） \\%
+    5 & AI工具使用详情.pdf & AI 工具使用详情说明（官方规定文件名） \\%
+  }%
+}
+% \aideclnotused / \aideclused{用途}：AI 工具使用声明（2026 试行规定第 3 条官方定句，二选一，位于参考文献前）
+\newcommand{\aideclnotused}{%
+  \section*{AI 工具使用声明}%
+  本参赛队在竞赛过程中未使用任何 AI 工具。\par
+}
+\newcommand{\aideclused}[1]{%
+  \section*{AI 工具使用声明}%
+  本参赛队在竞赛过程中使用了 AI 工具，主要用于 #1，详细使用情况见支撑材料。\par
+}
+% \threelinetable{标题}{列定义}{表头}{表格内容}：三线表，标题在表格上方居中 10.5pt 黑体加粗
+% 调用示例：\threelinetable{表 1 示例}{ccc}{A & B & C}{1 & 2 & 3 \\ 4 & 5 & 6}
+\newcommand{\threelinetable}[4]{%
+  \begin{center}
+    {\fontsize{10.5pt}{12.6pt}\heiti\bfseries #1}\par
+    \vspace{0.6em}
+    \begin{tabular}{#2}
+      \toprule
+      #3 \\
+      \midrule
+      #4 \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+}
+
+% ---------- 图表 caption 与浮动体间距（官方规范：图注下方居中、表注上方居中，字号小于正文） ----------
+\usepackage{caption}
+\captionsetup{font=small, labelfont=bf, justification=centering, labelsep=quad}
+\setlength{\intextsep}{10pt plus 2pt minus 2pt}
+\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+\setlength{\floatsep}{10pt plus 2pt minus 2pt}
+
+% ---------- PDF 书签与超链接 ----------
+% 2026 规范禁"目录页"，但 PDF 书签是侧栏导航层、不占页面，二者不冲突：
+% hyperref 自动由 \section/\subsection 生成分级书签。章节标题含数学时用
+% \texorpdfstring{$...$}{纯文本} 防止书签出现 "Token not allowed" 警告。
+\usepackage[bookmarks=true, bookmarksnumbered=true, bookmarksopen=true,
+            colorlinks=false, pdfborder={0 0 0}, unicode=true]{hyperref}
+
+\begin{document}
+
+% ============ 摘要专用页（2026 规范：标题+摘要+关键词同页，页码“1”页脚居中；无目录页）============
+\papertitle{论文标题}
+
+% 摘要正文写法：4 段（针对问题一/二/三/四），每段 = 方法 + 关键数值 + 结论；
+% 加粗优先级 = 结论句 > 模型/方法名 > 引导语 > 关键数值：
+%   数值包进结论短语整体加粗（如 \kw{仅到达 27 个端点，水流止于局部盆地}），
+%   禁止裸数字逐个加粗（\kw{15.88}、\kw{12.17} 一串 = 等于没加粗）；
+% 摘要加粗率 5-15%（官方 E030 达 20-25% 为上限）；
+% 关键词之间用空格分隔（\quad 过宽，会把末词挤到下一行）
+\abstractcn{%
+  中文摘要内容：问题概述 + 每个子问题的方法和数值结果 + 结论（关键数值包进结论短语加粗，如 \kw{仅到达 27 个端点}）%
+}{%
+  关键词1 关键词2 关键词3%
+}
+
+\input{sections/1_restatement}
+\input{sections/2_analysis}
+\input{sections/3_assumptions}
+\input{sections/4_symbols}
+\input{sections/5_problem1}
+\input{sections/6_problem2}
+\input{sections/7_problem3}
+\input{sections/8_sensitivity}
+\input{sections/9_evaluation}
+
+\newpage
+% AI 工具使用声明（2026 试行规定第 3 条：参考文献之前，官方定句二选一；使用版填简要用途）
+\pdfbookmark[0]{AI 工具使用声明}{ai_decl}
+\aideclused{语言润色、代码调试与图表绘制等}
+\newpage
+\pdfbookmark[0]{参考文献}{references}
+\referencescn
+\newpage
+\pdfbookmark[0]{附录 A 支撑材料文件列表}{appendix_a}
+\supportfilescn
+\pdfbookmark[0]{附录 B 源程序代码}{appendix_b}
+\appendixcn
+
+\end{document}

@@ -1,0 +1,2 @@
+name: 数学建模 Agent
+description: 专为数学建模竞赛（CUMCM 国赛、MCM/ICM 美赛、华数杯、华为杯等）设计的 Agent。内置 MathModelAgent 五阶段工作流 skills（赛题分析→建模→代码与图表→论文撰写→验证验收）与 17 套中英文论文模板，一条指令从赛题到可提交论文。

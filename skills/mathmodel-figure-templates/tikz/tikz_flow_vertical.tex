@@ -1,0 +1,51 @@
+% =====================================================================
+% TikZ 流程图模板 A：纵向技术路线图（fig_roadmap，数模论文最常用）
+% ---------------------------------------------------------------------
+% 用法：
+%   1) 论文导言区加入一次：
+%        \usepackage{tikz}
+%        \usetikzlibrary{arrows.meta, positioning, fit, backgrounds}
+%   2) 把下面 \begin{tikzpicture}...\end{tikzpicture} 整段复制到正文，
+%      包在 \begin{figure}[H]\centering ... \end{figure} 内。
+%   3) 把节点文字换成你的真实内容；层数/列数可增删（复制一行即可）。
+% 优点：字体与正文完全一致（ctex 宋体/黑体）、矢量、公式可直接进节点。
+% 颜色纪律：白底 + 蓝色系（官方展示论文流程图主流 = 蓝框白底/淡蓝填充，见 D037/E030）；
+% 主线节点淡蓝填充、数据/输出节点白底浅灰边、箭头蓝灰；文字黑体深灰。
+% =====================================================================
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw=black!55, rounded corners=2pt, minimum height=0.8cm, align=center,
+              fill=blue!6, text width=5.2cm},
+  head/.style={draw=blue!60!black, rounded corners=2pt, minimum height=0.8cm, align=center,
+               font=\small\heiti, text width=5.2cm, fill=blue!15},
+  arr/.style={-{Stealth[length=2.5mm]}, thick, blue!45!black},
+]
+  % ---- 第一层：输入数据 ----
+  \node[box] (d1) {附件 1--3 视频\\逐帧关键点坐标};
+  \node[box, right=0.35cm of d1] (d2) {附件 4\\体质报告};
+  \node[box, right=0.35cm of d2] (d3) {附件 5\\预测对象数据};
+  % ---- 第二层：方法主线 ----
+  \node[head, below=1.0cm of d1] (s1) {数据预处理\\（插值、平滑、标定）};
+  \node[head, right=0.35cm of s1] (s2) {运动学检测\\（起跳/落地时刻）};
+  \node[head, right=0.35cm of s2] (s3) {因素分析与预测\\（统计/机器学习）};
+  % ---- 第三层：产出 ----
+  \node[box, below=1.0cm of s2] (o1) {检测结果表\\滞空过程描述};
+  \node[box, right=0.35cm of o1] (o2) {影响因素排序\\预测值与区间};
+  % ---- 连线（按你的数据流改） ----
+  \draw[arr] (d1) -- (s1);
+  \draw[arr] (d2) -- (s1);
+  \draw[arr] (d3) -- (s3);
+  \draw[arr] (s1) -- (s2);
+  \draw[arr] (s2) -- (s3);
+  \draw[arr] (s2) -- (o1);
+  \draw[arr] (s3) -- (o2);
+  % ---- 阶段外框（背景层，不挡线） ----
+  \begin{scope}[on background layer]
+    \node[fit=(d1)(d3), draw=blue!35, rounded corners=4pt, inner sep=7pt,
+          label={[font=\small\heiti]above:输入}] {};
+    \node[fit=(s1)(s3), draw=blue!35, rounded corners=4pt, inner sep=7pt,
+          label={[font=\small\heiti]above:建模与求解}] {};
+    \node[fit=(o1)(o2), draw=blue!35, rounded corners=4pt, inner sep=7pt,
+          label={[font=\small\heiti]above:输出}] {};
+  \end{scope}
+\end{tikzpicture}

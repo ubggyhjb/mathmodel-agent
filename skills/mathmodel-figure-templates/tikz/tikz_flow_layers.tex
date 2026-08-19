@@ -1,0 +1,35 @@
+% =====================================================================
+% TikZ 流程图模板 B：分层架构图（指标体系/模型结构/模块关系）
+% ---------------------------------------------------------------------
+% 用法：同模板 A（导言区加载 tikz + positioning + fit）。
+% 本模板 = 左竖标签 + 3 列组件 + 层间箭头，适合指标体系图、模型层次图。
+% =====================================================================
+\begin{tikzpicture}[
+  font=\small,
+  cell/.style={draw=black!55, rounded corners=2pt, minimum height=0.7cm, align=center,
+               text width=3.6cm, fill=blue!6},
+  head/.style={draw=blue!60!black, rounded corners=2pt, minimum height=0.7cm, align=center,
+               font=\small\heiti, text width=3.6cm, fill=blue!15},
+  arr/.style={-{Stealth[length=2.5mm]}, thick, blue!45!black},
+]
+  % ---- 左竖标签 ----
+  \node[font=\small\heiti, rotate=90] (spine) {模型层次};
+  % ---- 第一层：目标层 ----
+  \node[head, right=0.6cm of spine] (g1) {目标：综合得分};
+  % ---- 第二层：准则层 ----
+  \node[head, below=0.8cm of g1] (c1) {准则一};
+  \node[head, right=0.35cm of c1] (c2) {准则二};
+  \node[head, right=0.35cm of c2] (c3) {准则三};
+  % ---- 第三层：指标层 ----
+  \node[cell, below=0.8cm of c1] (i1) {指标 1-1\\指标 1-2};
+  \node[cell, right=0.35cm of i1] (i2) {指标 2-1\\指标 2-2};
+  \node[cell, right=0.35cm of i2] (i3) {指标 3-1\\指标 3-2};
+  % ---- 第四层：数据层 ----
+  \node[cell, below=0.8cm of i1] (b1) {数据来源 1};
+  \node[cell, right=0.35cm of b1] (b2) {数据来源 2};
+  \node[cell, right=0.35cm of b2] (b3) {数据来源 3};
+  % ---- 连线 ----
+  \draw[arr] (g1) -- (c1);  \draw[arr] (g1) -- (c2);  \draw[arr] (g1) -- (c3);
+  \draw[arr] (c1) -- (i1);  \draw[arr] (c2) -- (i2);  \draw[arr] (c3) -- (i3);
+  \draw[arr] (i1) -- (b1);  \draw[arr] (i2) -- (b2);  \draw[arr] (i3) -- (b3);
+\end{tikzpicture}

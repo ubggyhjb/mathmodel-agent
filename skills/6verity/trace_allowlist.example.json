@@ -1,0 +1,8 @@
+{
+  "_comment": "工作区白名单模板：论文数字不在 results/*.json 中时在此登记来源。复制本文件为 <workspace>/trace_allowlist.json 使用。每条必须写非空 note（空 note 视为未说明来源 = FAIL）；value 按数值匹配，pattern 按数字原文整串匹配。",
+  "entries": [
+    {"value": 0.05, "note": "显著性水平 0.05（统计惯例）"},
+    {"value": 33, "note": "示例：题面给定的关键节点数 33——按实际赛题改成真实依据"},
+    {"pattern": "^0\\.00[0-9]+$", "note": "示例：论文 p<0.00x 表示法，逐条换成对应结果 JSON 中的具体 p 值与口径说明"}
+  ]
+}

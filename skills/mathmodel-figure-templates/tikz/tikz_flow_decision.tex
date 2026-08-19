@@ -1,0 +1,28 @@
+% =====================================================================
+% TikZ 流程图模板 C：带判断的子问题求解流程（fig_flow_q1/q2/q3）
+% ---------------------------------------------------------------------
+% 用法：同模板 A（导言区需额外 \usetikzlibrary{shapes.geometric} 以使用菱形）。
+% 本模板 = 顺序步骤 + 一个判断菱形 + 是/否分支，是单题求解流程的标准骨架。
+% =====================================================================
+\begin{tikzpicture}[
+  font=\small,
+  p/.style={draw=blue!60!black, rounded corners=2pt, minimum height=0.75cm, align=center,
+            text width=4.2cm, fill=blue!8},
+  d/.style={draw=blue!60!black, diamond, aspect=1.7, minimum height=1.0cm, align=center,
+            text width=3.0cm, fill=blue!15},
+  arr/.style={-{Stealth[length=2.5mm]}, thick, blue!45!black},
+]
+  \node[p] (a) {输入：逐帧关键点坐标};
+  \node[p, below=0.7cm of a] (b) {SG 平滑 + 全 0 帧插值};
+  \node[d, below=0.7cm of b] (c) {踝离地段 $\ge 6$ 帧？};
+  \node[p, below=0.7cm of c] (d1) {记录候选段};
+  \node[p, right=2.4cm of c] (d2) {跳过该段};
+  \node[p, below=0.7cm of d1] (e) {取髋速峰值最大段\\为正式起跳段};
+  \node[p, below=0.7cm of e] (f) {输出：起跳/落地帧\\滞空时间与姿态量};
+  \draw[arr] (a) -- (b);
+  \draw[arr] (b) -- (c);
+  \draw[arr] (c) -- node[left, font=\scriptsize, blue!50!black] {是} (d1);
+  \draw[arr] (c) -- node[above, font=\scriptsize, blue!50!black] {否} (d2);
+  \draw[arr] (d1) -- (e);
+  \draw[arr] (e) -- (f);
+\end{tikzpicture}

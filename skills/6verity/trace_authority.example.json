@@ -1,0 +1,6 @@
+{
+  "_comment": "权威源清单：论文关键结果数字必须命中其专属权威文件（而不是 sensitivity.json 等别处的同名值）。value 按数值匹配（容差同 trace 的 3e-4），glob 按结果文件名匹配（fnmatch）。复制为 <workspace>/trace_authority.json 使用。",
+  "entries": [
+    {"value": 16.45, "glob": "p4_mine*.json", "note": "示例：问题四附件1工人1调整后到达时刻，权威文件 p4_mine1.json"}
+  ]
+}
