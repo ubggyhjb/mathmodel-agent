@@ -64,10 +64,18 @@ stages:
     purpose: "数值用 generated_values.tex 命令；caption 由 figure manifest 生成；模型缺点随契约失效"
   - id: verification
     skill: 6verity
-    inputs: ["paper/main.tex|main.typ", "reports/gates/gates_report.json"]
-    outputs: ["reports/VERIFY_REPORT.md", "reports/gates/*.json"]
+    inputs:
+      - "paper/main.tex|main.typ"
+      - "paper/sections/*"
+      - "results/*.json"
+      - "figures/*.pdf"
+      - "figures/figure_manifest.json"
+      - "figures/*.meta.json"
+      - "reports/FINAL_MODEL_SPEC.json"
+      - "reports/methodology/*.json"
+    outputs: ["reports/gates/*.json", "reports/VERIFY_REPORT.md"]
     gate: run_all_gates
-    purpose: "九门+物理完整性门聚合；终审三席 + 答辩销号；不可修改被验对象"
+    purpose: "v4.1（R-02）：验证器输入=论文/结果/图/清单/契约/方法学 JSON——不得把自产的 gates_report 当输入（无自输入循环）；输出门禁报告与验收报告"
 
 gates_pipeline:
   # run_all_gates.py 的执行顺序（也是 README/文档中的门禁清单事实源）

@@ -274,7 +274,7 @@ def main():
     # T19 figure_story 缺 manifest -> FAIL
     td, tws = method_copy()
     try:
-        (tws / "reports" / "figure_story_manifest.json").unlink()
+        (tws / "figures" / "figure_manifest.json").unlink()
         results.append(report("T19", "figure_story 缺 manifest FAIL", False,
                               run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
     finally:
@@ -330,10 +330,10 @@ def main():
                     "source_results": [], "annotations": [],
                     "panels": {"A": {"line_count": 2, "patch_count": 1},
                                "B": {"line_count": 0, "scatter_count": 0, "patch_count": 0}}})
-        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
         manifest[0]["panels"] = [{"id": "B", "expected_marks": ["line:x", "line:y"],
                                   "min_artist_count": 3}]
-        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
         results.append(report("T22", "空白 panel FAIL", False,
                               run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
     finally:
@@ -382,9 +382,9 @@ def main():
         (tws / "paper" / "main.tex").write_text(
             "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{panel 为 M2/M3 的描述}"
             "\\label{fig:q1}\\end{figure}\n", encoding="utf-8")
-        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
         manifest[0]["caption"] = "panel 为 M1/M2 的描述"
-        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
         results.append(report("T26", "caption mismatch FAIL", False,
                               run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
     finally:
@@ -398,7 +398,7 @@ def main():
             "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{PR 曲线 A}\\label{fig:q1}\\end{figure}\n"
             "\\begin{figure}\\includegraphics{figures/fig_q2}\\caption{PR 曲线 B}\\label{fig:q2}\\end{figure}\n",
             encoding="utf-8")
-        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
         manifest = [
             {"id": "fig_q1", "main_message": "PR 曲线", "visual_priority": "primary",
              "files": ["figures/fig_q1.pdf"], "redundant_with": ["fig_q2"], "unique_information": "x",
@@ -407,7 +407,7 @@ def main():
              "files": ["figures/fig_q2.pdf"], "redundant_with": ["fig_q1"], "unique_information": "x",
              "keep_both_reason": ""},
         ]
-        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
         results.append(report("T27", "冗余图同正文 FAIL", False,
                               run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
     finally:
@@ -496,6 +496,188 @@ def main():
             json.dumps({"Turnbull estimator": ["ref_turnbull"]}, ensure_ascii=False), encoding="utf-8")
         results.append(report("T33", "核心方法无文献 FAIL", False,
                               run([SCRIPTS / "verify_refs.py", "--workspace", tws, "--strict"])))
+
+    # ============ v4.1 false-pass regression（T34-T45，任务书 v4.1 第七条） ============
+
+    # T34 axis 标"%"但数据仍为 fraction（raw==value 且 transform=*100）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "reports" / "variables.json").write_text(
+            json.dumps({"Y_fraction": {"storage_unit": "fraction", "storage_range": [0, 1],
+                                       "display": {"percent": {"transform": "*100", "unit": "%",
+                                                                "threshold_raw": 0.04,
+                                                                "threshold_display": 4.0}}}},
+                       ensure_ascii=False), encoding="utf-8")
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [], "annotations": [{"label": "阈值", "value_key": "T",
+                                                           "role": "reference_threshold",
+                                                           "raw": 0.04, "value": 0.04}],
+                    "axes": [{"ylabel": "Y浓度 (%)", "variable": "Y_fraction", "display": "percent"}],
+                    "panels": {}})
+        results.append(report("T34", "percent/fraction 混用 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T35 panel metadata=M1/M2 而 caption 写 M2/M3 -> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "paper" / "main.tex").write_text(
+            "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{panel M2/M3 对比}"
+            "\\label{fig:q1}\\end{figure}\n", encoding="utf-8")
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["panels"] = [{"id": "A", "model_id": "M1"}, {"id": "B", "model_id": "M2"}]
+        manifest[0]["caption"] = "panel 为 M2/M3 对比"
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T35", "panel/caption mismatch FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T36 current recommendation 与 baseline 绑定同一 value_key -> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        (tws / "results").mkdir()
+        json_write(tws / "results" / "p2_ic.json", {"G2": {"recommended": {"low": 15.0}}})
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [{"file": "results/p2_ic.json", "sha256": "", "keys": ["G2.recommended.low"]}],
+                    "annotations": [
+                        {"label": "当前推荐", "value_key": "G2.recommended.low",
+                         "role": "current_recommendation", "value": 15.0},
+                        {"label": "旧基线", "value_key": "G2.recommended.low",
+                         "role": "baseline_interpolation", "value": 15.0}],
+                    "panels": {}})
+        results.append(report("T36", "当前推荐绑定基线 key FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T37 主模型为 interval censoring 但图 caption 写 KM/Greenwood -> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "paper" / "main.tex").write_text(
+            "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{Kaplan--Meier 与 Greenwood 置信带}"
+            "\\label{fig:q1}\\end{figure}\n", encoding="utf-8")
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["caption"] = "Kaplan--Meier 与 Greenwood 置信带"
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        # 契约声明 interval 主口径（likelihood=interval 已在 fixture spec）
+        m = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", m)
+        results.append(report("T37", "interval 主口径 vs KM caption FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T38 论文核心似然出现 S(U)-S(L) -> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "区间删失贡献为 $S(U_i)-S(L_i)$。\n", encoding="utf-8")
+        results.append(report("T38", "似然反向表达 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T39 LaTeX 正文残留 **text** / `code` -> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "区间删失为**主口径**，使用 `Thr=0.04` 阈值。\n", encoding="utf-8")
+        results.append(report("T39", "Markdown 残留 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T40 正文出现 FINAL_MODEL_SPEC / results/ / reports/ -> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "reports").mkdir()
+        (tws / "paper" / "main.tex").write_text(
+            "按 FINAL_MODEL_SPEC rev=1 实现，结果见 results/p2_ic.json。\n", encoding="utf-8")
+        results.append(report("T40", "内部术语泄漏 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T41 声明的 panel 无 data artist（无 min_artist_count -> 默认 1）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [], "annotations": [],
+                    "panels": {"B": {"line_count": 0, "scatter_count": 0}}})
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["panels"] = [{"id": "B", "expected_marks": ["line:x"]}]
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T41", "空 panel（默认 1 artist）FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T42 forest 图使用伪区间 [0,|beta|] -> figure_story FAIL（meta.axes.note 含 pseudo_interval 或
+    #        caption 称 forest 但 ci_declared 未声明）
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [], "annotations": [],
+                    "axes": [{"ylabel": "效应", "variable": "beta", "display": "magnitude",
+                              "note": "pseudo_interval_0_to_abs_beta"}],
+                    "panels": {}})
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["caption"] = "协变量效应森林图（0 至 |beta| 作为区间）"
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T42", "伪 forest CI FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T43 sensitivity/limitations 依赖旧 contract rev -> methodology FAIL
+    td, tws = method_copy()
+    try:
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        spec["contract_rev"] = 2
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        (tws / "paper" / "main.tex").write_text(
+            "按 FINAL_MODEL_SPEC rev=1 建模，局限见正文。\n"
+            "删失结构为区间删失，候选模型采用 Turnbull 与 interval-censored Weibull。\n",
+            encoding="utf-8")
+        results.append(report("T43", "旧契约 rev 残留 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T44 附录 source list 与实际 code 不一致 -> style_audit / appendix_source_list FAIL
+    path_ws = Path(tempfile.mkdtemp())
+    try:
+        (path_ws / "code").mkdir(parents=True)
+        (path_ws / "paper" / "sections").mkdir(parents=True)
+        (path_ws / "code" / "problem1.py").write_text("x", encoding="utf-8")
+        (path_ws / "paper" / "sections" / "A_code.tex").write_text(
+            "\\section*{附录}\n\\lstinputlisting{../code/problem2.py}\n", encoding="utf-8")
+        results.append(report("T44", "附录清单不一致 FAIL", False,
+                              run([SCRIPTS / "appendix_source_list.py", "--workspace", path_ws, "--check"])))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(path_ws, ignore_errors=True)
+
+    # T45 视觉审核 SHA 与最终 PDF SHA 不一致 -> visual_review --check FAIL
+    path_ws = Path(tempfile.mkdtemp())
+    try:
+        (path_ws / "paper").mkdir(parents=True)
+        (path_ws / "reports").mkdir()
+        (path_ws / "paper" / "main.pdf").write_bytes(b"%PDF-fake-1")
+        (path_ws / "reports" / "visual_review.json").write_text(
+            json.dumps({"reviewed_pdf_sha256": "deadbeef" * 8}), encoding="utf-8")
+        results.append(report("T45", "审稿 SHA 与 PDF 不一致 FAIL", False,
+                              run([SCRIPTS / "visual_review.py", "--workspace", path_ws, "--check"])))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(path_ws, ignore_errors=True)
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

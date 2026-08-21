@@ -46,7 +46,7 @@ apmcm, default, mcm
 
 论文中的所有数值图表结论必须来自 `reports/RESULTS_REPORT.md` 或 `figures/*`。不得编造、估算或使用不同的四舍五入方式。
 
-**v4 数值同源（任务书 7 条）**：关键数值**禁止手抄**。运行 `6verity/scripts/generated_values.py --workspace <项目根>` 由 `results/*.json` 自动生成 `paper/generated_values.tex`（每值一个 `\newcommand{\QTwoGTwoLow}{14.2}`），论文正文只写 `\QTwoGTwoLow`——数字天然绑定结果 key，trace 无需再猜"14.2 来自哪个 JSON"；任何结果更新后重生成该文件，禁止手工编辑它。
+**v4 数值同源（任务书 7 条；R-03 政策：recommended 级）**：关键数值用 `6verity/scripts/generated_values.py` 由 `results/*.json` 生成 `paper/generated_values.tex`（每值一个 `\newcommand{\QTwoGTwoLow}{14.2}`），论文只写命令——数字天然绑定结果 key。**实现上与文档一致：该机制为 recommended（推荐增强项），不做硬门禁**；若项目采用"trace_numbers authority 校验（value+glob 绑定） + 结果文件 4 位精度一致"闭环，视为等效工程增强项，允许不接 generated_values（禁止出现"文档写 mandatory、项目未接仍 PASS"的契约冲突）。
 
 
 ## 工作流

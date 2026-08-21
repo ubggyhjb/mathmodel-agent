@@ -84,7 +84,11 @@
 }
 ```
 
-门禁行为：meta.json 缺失 → WARN（v4 建议强制，P5 起新图必带）；
-meta.json 存在但 panel artist 计数 < min_artist_count → FAIL（空 panel 直接拦截）；
-annotations value_key 不在 source_results 中 → FAIL；axes 的 variable/display 与
-`reports/variables.json`（unit registry）声明不一致 → FAIL。
+门禁行为：meta.json 缺失 → **正式图（primary/secondary）FAIL**（v4.1 R-05；appendix 降 WARN）；
+meta.json 存在但 panel artist 计数 < min_artist_count（默认 1，`intentionally_empty=true` 可豁免）→ FAIL
+（空 panel 直接拦截）；annotations 缺 **semantic role**（current_recommendation /
+baseline_interpolation / reference_threshold / ...，R-06）→ FAIL；**同一 value_key 不得同时被标为
+当前推荐与旧基线**（T36）；annotations value_key 不在 source_results 中 → FAIL；axes 的
+variable/display 与 `reports/variables.json` 声明不一致 → FAIL；**unit audit 校验实际 raw→display
+变换**（raw==value 但 registry transform 非 1 → FAIL，R-07：不轻信 metadata 的"已×100"声明，
+主图强制走 FigureBuilder 并记录 raw/transform）。

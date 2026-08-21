@@ -71,13 +71,14 @@ def collect_figure_dir(ws: Path) -> list:
 
 
 def load_manifest(ws: Path):
-    """v4 唯一清单；回退 v3 旧清单并提示迁移。返回 (manifest, used_legacy)。"""
+    """v4.1（R-01）：唯一清单 figures/figure_manifest.json——不再回退旧路径
+    reports/figure_story_manifest.json（旧文件存在时提示删除，不影响判定）。"""
     doc = gc.load_json(ws / MANIFEST_REL, None)
     if isinstance(doc, list):
         return doc, False
-    doc = gc.load_json(ws / LEGACY_REL, None)
-    if isinstance(doc, list):
-        return doc, True
+    if gc.load_json(ws / LEGACY_REL, None) is not None:
+        print(f"WARN 发现旧清单 {LEGACY_REL}：v4.1 已废除该路径，请删除（仅保留 {MANIFEST_REL}）",
+              file=sys.stderr)
     return None, False
 
 
@@ -205,13 +206,9 @@ def main(argv=None):
     ws = Path(args.workspace).resolve()
     findings = []
     manifest, used_legacy = load_manifest(ws)
-    if used_legacy:
-        findings.append({"level": "WARN", "check": "manifest_merged",
-                         "message": f"正在回退读取 v3 旧清单 {LEGACY_REL}——v4 唯一清单应为 "
-                                    f"{MANIFEST_REL}（迁移/合并后删除旧文件）"})
     if not isinstance(manifest, list):
         findings.append({"level": "FAIL" if args.strict else "WARN", "check": "manifest",
-                         "message": f"{MANIFEST_REL} 缺失或非数组：主图未做 Figure Story 定义"})
+                         "message": f"{MANIFEST_REL} 缺失或非数组：主图未做 Figure Story 定义（v4.1 唯一清单，无旧路径回退）"})
         manifest = []
 
     by_files = {}
@@ -274,29 +271,42 @@ def main(argv=None):
         if files and idx not in used_stems and Path(files[0]).stem not in used_stems:
             continue  # 未上正文的图不做完整性检查
         if meta is None:
-            findings.append({"level": "WARN", "check": "meta_missing",
-                             "message": f"Figure {idx} 缺 figures/<id>.meta.json（v4 强制：provenance + artist 计数）"})
+            # R-05：正式 Figure（primary/secondary）缺 meta 直接 FAIL；appendix 降为 WARN
+            prio = item.get("visual_priority", "primary")
+            findings.append({"level": "FAIL" if (args.strict and prio != "appendix") else "WARN",
+                             "check": "meta_missing",
+                             "message": f"Figure {idx} 缺 figures/<id>.meta.json（R-05：正式图必须带 "
+                                        f"provenance + artist 计数；缺 meta 不得进入终稿）"})
         else:
-            # panel integrity
+            # panel integrity（R-05：panel 默认至少 1 个 data artist，除非 intentionally_empty=true）
             for panel in item.get("panels", []) or []:
                 if not isinstance(panel, dict):
-                    continue  # v3 旧 schema：panels 为字符串列表（"A","B"），无完整性声明
-                pid = str(panel.get("id", "A"))
-                min_count = panel.get("min_artist_count")
-                if min_count is None:
+                    continue  # v3 旧 schema：字符串列表
+                if panel.get("intentionally_empty") is True:
                     continue
+                pid = str(panel.get("id", "A"))
+                min_count = panel.get("min_artist_count", 1)
                 counts = (meta.get("panels") or {}).get(pid) or {}
                 total = sum(int(counts.get(k, 0) or 0) for k in
                             ("line_count", "scatter_count", "patch_count", "collection_count"))
                 if total < int(min_count):
                     findings.append({"level": "FAIL" if args.strict else "WARN", "check": "panel_integrity",
                                      "message": f"Figure {idx} Panel {pid}: artist 计数 {total} "
-                                                f"< min_artist_count {min_count}（空白/空 panel）"})
-            # annotation-key trace
+                                                f"< min_artist_count {min_count}（空白/空 panel；"
+                                                f"若确有意留空须声明 intentionally_empty=true）"})
+            # annotation-key trace + semantic role（R-06）
+            VALID_ROLES = {"current_recommendation", "baseline_interpolation",
+                           "reference_threshold", "reference_line", "mechanism", "other"}
+            key_roles = {}
             for ann in meta.get("annotations", []) or []:
                 vk = ann.get("value_key")
                 if not vk:
                     continue
+                role = str(ann.get("role", "") or "").strip()
+                if role not in VALID_ROLES:
+                    findings.append({"level": "FAIL" if args.strict else "WARN", "check": "annotation_role",
+                                     "message": f"Figure {idx} 标注 {ann.get('label')} 缺合法 role"
+                                                f"（{role!r}；应为 {sorted(VALID_ROLES)}）——无法区分当前结论与旧基线"})
                 ok_any = False
                 for src in meta.get("source_results", []) or []:
                     if check_source_key(ws, src, vk):
@@ -306,6 +316,16 @@ def main(argv=None):
                     findings.append({"level": "FAIL" if args.strict else "WARN", "check": "annotation_key",
                                      "message": f"Figure {idx} 标注 {ann.get('label')} 的 value_key={vk} "
                                                 f"在 source_results 中不存在（数字可能来自旧口径）"})
+                # 同一 value_key 不得同时被"当前推荐"与"旧基线"引用（T36 反例）
+                if role.startswith("baseline"):
+                    key_roles.setdefault(vk, set()).add("baseline")
+                elif role == "current_recommendation":
+                    key_roles.setdefault(vk, set()).add("current")
+            for vk, roles in key_roles.items():
+                if "baseline" in roles and "current" in roles:
+                    findings.append({"level": "FAIL" if args.strict else "WARN", "check": "annotation_role",
+                                     "message": f"Figure {idx} value_key={vk} 同时被标为当前推荐与旧基线"
+                                                f"——旧值可能被当成当前结论（T36）"})
             # unit audit
             uproblems = audit_variables(ws, meta)
             if uproblems:
@@ -336,6 +356,34 @@ def main(argv=None):
                         findings.append({"level": "FAIL" if args.strict else "WARN", "check": "caption_consistency",
                                          "message": f"Figure {idx} caption 与论文不一致：manifest='{mcap[:40]}' "
                                                     f"vs paper='{pcap[:40]}'"})
+                    # T35/P0-02：caption 提及的模型编号与 panels[].model_id 集合必须一致
+                    panel_models = {str(p.get("model_id")) for p in item.get("panels", []) or []
+                                    if isinstance(p, dict) and p.get("model_id")}
+                    cap_models = set(re.findall(r"\bM\d+\b", mcap) + re.findall(r"\bM\d+\b", pcap))
+                    if panel_models and cap_models and panel_models != cap_models:
+                        findings.append({"level": "FAIL" if args.strict else "WARN", "check": "caption_panel_model",
+                                         "message": f"Figure {idx}: caption 提及模型 {sorted(cap_models)} "
+                                                    f"与 panels.model_id {sorted(panel_models)} 不一致（P0-02/T35）"})
+        # T37/P0-05：spec 为 interval 主口径时，正式图 caption 不得用 KM/Greenwood 表述
+        spec = gc.load_json(ws / "reports" / "FINAL_MODEL_SPEC.json", None)
+        interval_main = bool(spec) and any(
+            str(p.get("likelihood", "")) == "interval"
+            for p in (spec.get("problems") or []))
+        if interval_main and re.search(r"Kaplan|Greenwood|\bKM\b", mcap) \
+                and item.get("visual_priority", "primary") != "appendix":
+            findings.append({"level": "FAIL" if args.strict else "WARN", "check": "interval_vs_km",
+                             "message": f"Figure {idx}: 主口径为区间删失（契约 likelihood=interval）但 caption"
+                                        f" 使用 KM/Greenwood 表述——图与主方法不一致（P0-05/T37），"
+                                        f"须重画为 Turnbull/区间删失曲线"})
+        # T42/P0-09：称 forest 但无真实 CI 声明（或显式伪区间）→ FAIL
+        if meta is not None and mcap:
+            if re.search(r"森林|forest", mcap, re.I):
+                axes_note = " ".join(str(a.get("note", "")) for a in meta.get("axes", []) or [])
+                if "pseudo_interval" in axes_note or meta.get("ci_declared") is not True:
+                    findings.append({"level": "FAIL" if args.strict else "WARN", "check": "fake_forest_ci",
+                                     "message": f"Figure {idx}: caption 称 {mcap[:30]}… 但（伪区间标记 "
+                                                f"或 meta 未声明 ci_declared=true）——无真实 95% CI 不得称 forest"
+                                                f"（P0-09/T42），改标准化系数幅度图"})
 
     fails = [f for f in findings if f["level"] == "FAIL"]
     warns = [f for f in findings if f["level"] == "WARN"]

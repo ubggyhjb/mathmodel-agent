@@ -62,7 +62,7 @@ def scan_paper_text(ws: Path) -> str:
                 t = p.read_text(encoding="utf-8")
             except Exception:
                 continue
-            t = re.sub(r"(?m)%.*$", "", t)                    # latex 注释
+            t = re.sub(r"(?m)(?<!\\)%.*$", "", t)                    # latex 注释
             t = re.sub(r"(?m)//.*$", "", t)                   # typst 注释
             t = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^{}]*\})?", " ", t)  # latex 命令
             t = re.sub(r"#[a-zA-Z-]+", " ", t)                # typst 函数
@@ -295,7 +295,7 @@ def read_cleaned_rel(ws: Path, rel: str) -> str:
         t = p.read_text(encoding="utf-8")
     except Exception:
         return ""
-    t = re.sub(r"(?m)%.*$", "", t)
+    t = re.sub(r"(?m)(?<!\\)%.*$", "", t)
     t = re.sub(r"(?m)//.*$", "", t)
     t = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^{}]*\})?", " ", t)
     t = re.sub(r"#[a-zA-Z-]+", " ", t)

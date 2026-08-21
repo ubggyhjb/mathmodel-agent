@@ -39,7 +39,7 @@
       2. `7methodology-review` 方法学审查（v4）→ reports/methodology/*.json（DGP / 统计假设 / 删失审计 / 优化退化 / 模型必要性 / ML 泄露 / 样本量）+ reports/FINAL_MODEL_SPEC.json（**可执行模型契约**，schema 见 docs/FINAL_MODEL_SPEC.schema.md）+ reports/figure_story_manifest.json（建模前先定每张主图的 main_message，再决定画什么）
       3. `3coding-visual` 编程实现与图表生成 → code/ results/ figures/（**只实现 FINAL_MODEL_SPEC.json 声明的模型**；结果 JSON 写 model_spec_sha256；每张正式图生成 figures/<name>.meta.json）
       4. `4drawio` 概念图与架构图 → figures/*.tex|*.mmd|*.drawio（只有存在无法用正文/数据图表达的结构关系才画，concept figure ≤1；不再默认要求技术路线图）
-      5. `5writing` 论文撰写 → paper/（内置 17 套中英文 Typst/LaTeX 模板；**数值用 paper/generated_values.tex 命令，不手抄裸数字**；caption 由 figure manifest 生成；模型契约 contract_rev 变化后依赖段落标 stale 重生成）
+      5. `5writing` 论文撰写 → paper/（内置 17 套中英文 Typst/LaTeX 模板；数值同源为 recommended 级：推荐用 paper/generated_values.tex 命令（authority trace 精度一致闭环为等效替代），不做硬门禁；caption 由 figure manifest 生成；模型契约 contract_rev 变化后依赖段落标 stale 重生成）
       6. `6verity` 验证与验收 → reports/VERIFY_REPORT.md（十门聚合：manifest/layout/text_integrity/trace/style/decision/refs/methodology/leakage/figure_story；**验证器完全只读，绝不修改被验对象**）
 
       领域知识需要时加载 `references` skill（或直接 grep/read `references/math_modeling_norms.md`）。数值结论必须来自代码运行结果，绝不编造。需要绘图模板时使用 `mathmodel-figure-templates`，需要 Typst 排版知识时使用 `typst-author`，环境有问题时使用 `doctor`。

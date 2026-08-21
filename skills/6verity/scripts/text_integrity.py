@@ -85,6 +85,85 @@ def _clean_kw_line(line: str) -> str:
     return line.strip()
 
 
+# 内部流程术语（R-04/P0-03）：正文节（排除附录 A_code 与 references）不得出现；
+# 支持 LaTeX 转义下划线变体（FINAL\_MODEL\_SPEC / result\_s 等）
+INTERNAL_TERM_PATTERNS = [
+    (r"FINAL\\?_MODEL\\?_SPEC", "模型契约文件名泄漏到正文"),
+    (r"model\\?_spec\\?_sha(256)?", "契约哈希字段泄漏到正文"),
+    (r"methodology[_ ]review", "内部流程名泄漏到正文"),
+    (r"7methodology", "内部阶段名泄漏到正文"),
+    (r"workflow\\?_spec", "内部配置文件泄漏到正文"),
+    (r"\breports/", "内部目录路径泄漏到正文"),
+    (r"\bresults/\w", "内部结果路径泄漏到正文"),
+    (r"\bcode/\w+\.py", "内部源码路径泄漏到正文"),
+    (r"(?<![A-Za-z_:])v[0-9]{1,2}(?![0-9A-Za-z_.])", "版本号（v3/v4）泄漏到正文（fig:v3_* 标签名除外）"),
+]
+# Markdown 残留（P0-07）：正文不得出现 **粗体** / `行内代码` 标记
+MARKDOWN_RE = re.compile(r"\*\*[^*\n]{1,120}\*\*|`[^`\n]{1,120}`")
+# 区间删失似然反向表达（T38/P0-06）：S(U)-S(L) 数学上为负，正确为 S(L)-S(U)
+LIKELIHOOD_INVERTED_RE = re.compile(
+    r"S\s*\(\s*U[^)]{0,20}\)\s*-\s*S\s*\(\s*L[^)]{0,20}\)\s*"
+    r"|\[S\(U\)[^\]]{0,20}S\(L\)\]")
+# 相邻重复句（R-04）
+def _norm_line(s: str) -> str:
+    s = re.sub(r"(?m)%.*$", "", s)
+    s = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^{}]*\})?", " ", s)
+    return re.sub(r"\s+", "", s)
+
+
+def scan_internal_and_markdown(ws: Path, strict: bool):
+    """R-04/P0-03/P0-07：正文节内部术语 + Markdown 残留 + 相邻重复句。"""
+    findings = []
+    paper = ws / "paper"
+    if not paper.is_dir():
+        return findings
+    for p in sorted(paper.rglob("*")):
+        if p.suffix.lower() not in (".tex", ".typ"):
+            continue
+        rel = p.relative_to(ws).as_posix()
+        # 附录源码引用与参考文献区豁免（路径/文件名属合法内容）
+        if "A_code" in rel or "references" in rel:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        # 剔除注释行/行内注释（LaTeX % 与 Typst //）后检查——注释中的 v4/模板说明不算正文；
+        # `\%` 等转义百分号不是注释（负向后视）
+        stripped = re.sub(r"(?m)(?<!\\)%.*$", "", text)
+        if p.suffix.lower() == ".typ":
+            stripped = re.sub(r"(?m)//.*$", "", stripped)
+        for pat, why in INTERNAL_TERM_PATTERNS:
+            for m in re.finditer(pat, stripped):
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "internal_term",
+                                 "message": f"{rel}: 内部流程术语 {m.group(0)[:40]!r}（{why}）——生产系统措辞不得进入正文"})
+        for m in MARKDOWN_RE.finditer(stripped):
+            findings.append({"level": "FAIL" if strict else "WARN", "check": "markdown_leak",
+                             "message": f"{rel}: Markdown 残留 {m.group(0)[:40]!r}——LaTeX 正文不得出现 **/**/` 标记"})
+        for m in LIKELIHOOD_INVERTED_RE.finditer(stripped):
+            findings.append({"level": "FAIL", "check": "likelihood_inverted",
+                             "message": f"{rel}: 区间删失似然反向表达 {m.group(0)[:50]!r}——"
+                                        f"应为 S(L)-S(U)（F(U)-F(L)），S(U)-S(L) 数学上为负（T38/P0-06）"})
+        # 相邻重复句（跳过表格行/宏定义/环境行/无文字行——结构重复属正常排版）
+        lines = [l for l in (_norm_line(x) for x in stripped.splitlines()) if l]
+        for a, b in zip(lines, lines[1:]):
+            if not a or not b:
+                continue
+            if not re.search(r"[\u4e00-\u9fff]", a) and not re.search(r"\b[A-Za-z]{3,}\b", a):
+                continue  # 纯符号/模板行（{0pt}、[H]、长度残片等）
+            if "&" in a or "&" in b or a.startswith(("\\begin", "\\end", "\\newcommand", "\\def")):
+                continue
+            if a == b:
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "duplicate_adjacent",
+                                 "message": f"{rel}: 相邻行重复句：{a[:50]}..."})
+            elif len(a) > 20 and len(b) > 20:
+                sim = len(set(a) & set(b)) / max(1, len(set(a) | set(b)))
+                if sim > 0.9:
+                    findings.append({"level": "WARN", "check": "duplicate_adjacent",
+                                     "message": f"{rel}: 相邻行高度相似（{sim:.0%}）：{a[:40]}..."})
+    return findings
+
+
 def scan_keywords(ws: Path, strict: bool):
     """关键词程序化检查。支持两种位置：
       A) `关键词：<词…>`（前缀行）；
@@ -187,6 +266,7 @@ def main(argv=None):
     findings = []
     findings.extend(scan_placeholders(ws, args.strict))
     findings.extend(scan_keywords(ws, args.strict))
+    findings.extend(scan_internal_and_markdown(ws, args.strict))
     findings.extend(scan_compile_log(ws, args.log, args.strict, args.overfull_severe_pt))
 
     fails = [f for f in findings if f["level"] == "FAIL"]

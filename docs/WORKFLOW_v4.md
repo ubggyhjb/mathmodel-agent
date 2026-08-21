@@ -75,7 +75,7 @@ flowchart TD
 
 ## 五、写作与可视化 v4 规则新增
 
-- **数值**：论文不再手抄关键数字，使用 `paper/generated_values.tex`（由 results/*.json 生成，
+- **数值（R-03：recommended 级，不做硬门禁）**：推荐使用 `paper/generated_values.tex`（由 results/*.json 生成，
   `\newcommand{\QTwoGTwoLow}{14.2}` 类命令）；trace 按命令来源 key 校验。
 - **caption**：由 figure manifest（panel 定义 + 描述）生成，禁止"图由代码定义 panel、caption 再由模型手写"。
 - **图表纪律**：只画满足 Figure Story 的最少充分图表；概念图 ≤1；每张正式图带 `.meta.json`

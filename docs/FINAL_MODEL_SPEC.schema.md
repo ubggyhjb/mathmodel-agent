@@ -39,6 +39,14 @@
       "primary_model": "interval_censored_weibull_aft",
       "likelihood": "interval",
       "likelihood_evidence": ["区间删失", "Turnbull", "interval-censored"],
+      "likelihood_contribution": {
+        "form": "F(U_i)-F(L_i) = S(L_i)-S(U_i)",
+        "left": "log F(U_i)",
+        "interval": "log [S(L_i) - S(U_i)]",
+        "right": "log S(L_i)",
+        "note": "v4.1（R-08）：结构化公式贡献——Writing Agent 只按本字段渲染公式，禁止自由重写；
+                程序侧检测 S(U)-S(L) 型反向表达（text_integrity likelihood_inverted，FAIL）"
+      },
       "covariates": ["BMI", "age", "parity", "IVF"],
       "excluded_covariates": {
         "height": "collinearity",
