@@ -105,19 +105,27 @@ def main():
             encoding="utf-8")
         results.append(report("T05", "layout_gate unknown strict FAIL", False,
                               run([SCRIPTS / "layout_gate.py", "--workspace", tws, "--strict"])))
-    # T06 图源缺失（复制新稿 paper，删除某图的 pdf 与 png 两种源）
+    # T06 图源缺失（复制基线项目 paper，删除某被引图的 pdf 与 png 两种源）
     if need_ws("T06", "layout_gate 图源缺失 FAIL"):
         with tempfile.TemporaryDirectory() as td:
             tws = Path(td)
             shutil.copytree(ws / "paper", tws / "paper")
             shutil.copytree(ws / "figures", tws / "figures")
             shutil.copy2(ws / "project.manifest.json", tws / "project.manifest.json")
-            for name in ("fig_network_mine1.pdf", "fig_network_mine1.png"):
-                target = tws / "figures" / name
-                if target.is_file():
-                    target.unlink()
-            results.append(report("T06", "layout_gate 图源缺失 FAIL", False,
-                                  run([SCRIPTS / "layout_gate.py", "--workspace", tws, "--strict"])))
+            # 动态选取一个同时有 pdf+png 的被引图源（旧硬编码 fig_network_mine1 为模型四专属）
+            target = None
+            for stem in sorted({p.stem for p in (ws / "figures").glob("*")}):
+                if (ws / "figures" / f"{stem}.pdf").is_file() and (ws / "figures" / f"{stem}.png").is_file():
+                    target = stem
+                    break
+            if target is None:
+                skipped.append("T06 layout_gate 图源缺失 FAIL")
+                print("[SKIP] T06: 基线项目无 pdf+png 成对图源（动态选择失败）")
+            else:
+                for name in (f"{target}.pdf", f"{target}.png"):
+                    (tws / "figures" / name).unlink()
+                results.append(report("T06", "layout_gate 图源缺失 FAIL", False,
+                                      run([SCRIPTS / "layout_gate.py", "--workspace", tws, "--strict"])))
 
     # T07 style_audit 基线
     if need_ws("T07", "style_audit 基线"):
@@ -189,10 +197,9 @@ def main():
         else:
             results.append(report("T11", "verify_refs 编造文献 FAIL", False, proc))
 
-    # T12 聚合门（离线时 skip refs；v3 新门 methodology/leakage/figure_story 由 T14-T19 单独覆盖，
-    # 待 C 题项目完成 v3 methodology 补全后启用全量聚合基线）
+    # T12 聚合门（v3：C 题项目已满足全部九门，全量跑；离线时 skip refs）
     if need_ws("T12", "run_all_gates 聚合"):
-        skip_extra = "refs,methodology,leakage,figure_story" if args.skip_online else "methodology,leakage,figure_story"
+        skip_extra = "refs" if args.skip_online else ""
         results.append(report("T12", "run_all_gates 聚合", True,
                               run([SCRIPTS / "run_all_gates.py", "--workspace", ws, "--strict",
                                    "--skip", skip_extra])))
