@@ -378,6 +378,13 @@ python <6verity skill>/scripts/attack_questions.py --workspace . --min 10
 
 终审增加一次**看图**审阅：把正文 1-30 页渲染成 contact sheet + 每张本轮新增/修改的 Figure 单独高分辨率图，交给上下文隔离的视觉 Reviewer，只回答：裁切 / 空 panel / 字体太小 / 标签重叠 / 坐标范围异常 / 单位异常 / 视觉中心不明确 / 重复图 / 图注与图意不符。程序化门禁抓不到的问题（曲线全贴底部、标签挤成一团）由这一步兜底；**任何本轮新增或修改的 Figure 必须单独目检，不能只抽查旧页面**。
 
+**v1 十六条（Figure Evidence Consistency Review）并入本步**：每张图进入论文前，独立审稿 Agent 逐图回答：
+1. 图是否支持正文声称的结论？（含反向证据检查）
+2. 图是否存在与正文相反的证据？
+3. 图是否强调了错误的信息（把次要信息当主信息）？
+4. 是否存在统计意义与视觉意义冲突（如图内曲线大范围平坦、正文却称"目标函数精确决定"→ WARN）？
+五张主 Figure 与所有本轮新增/修改图必须逐张回答，结论写入 reports/VERIFY_REPORT.md 的"图-正文证据一致性"小节。
+
 ### Step 11: Paper Simplification Pass（v3）
 
 终稿完成后逐节问一遍，**删掉不影响论证的就删除**：
