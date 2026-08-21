@@ -41,6 +41,10 @@ import re
 import sys
 from pathlib import Path
 
+# gate_common.py lives beside this script; make direct execution/import reliable.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_common as gc
+
 
 def force_utf8():
     for stream in (sys.stdout, sys.stderr):
@@ -70,6 +74,7 @@ BUILTIN_ALLOWLIST = {
 }
 
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
+RANGE_DASH_RE = re.compile(r"(?<=\d)(?:%|__PCT__)?--(?=\d)")
 CODE_BLOCK_RE = re.compile(
     r"\\begin\{(?:lstlisting|verbatim|minted|lstcode|thebibliography)\}.*?"
     r"\\end\{(?:lstlisting|verbatim|minted|lstcode|thebibliography)\}",
@@ -146,6 +151,7 @@ def scan_tex_file(f, ignore_int_max):
     text = GRAPHICS_RE.sub("", text)
     text = TIKZ_RE.sub("", text)
     text = "\n".join(line.split("%", 1)[0] for line in text.splitlines())
+    text = RANGE_DASH_RE.sub(" to ", text)
 
     found = []
     for m in NUM_RE.finditer(text):
@@ -182,6 +188,85 @@ def scan_tex_file(f, ignore_int_max):
             "ctx": ctx,
         })
     return found
+
+
+def typst_collect_files(entry):
+    """Recursively collect .typ files reachable through #include."""
+    files, seen, stack = [], set(), [Path(entry)]
+    while stack:
+        f = stack.pop()
+        key = str(f.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if not f.is_file():
+            continue
+        files.append(f)
+        raw = f.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r'#include\(\s*"([^"\\]+\.typ)"\s*\)', raw):
+            stack.append(f.parent / m.group(1))
+    return sorted(files)
+
+
+TYP_CALL_ARG_RE = re.compile(
+    r"#(?:include|image|cite|super|sub|bibliography|label|ref|link)\s*\([^)]*\)")
+TYP_SET_RE = re.compile(r"#(?:set|show)\s+\w+\s*\([^)]*\)")
+TYP_CONTENT_PREAMBLE_RE = re.compile(
+    r"#(?:text|strong|emph|underline|strike|smallcaps|footnote|note|small|large)\s*\([^)]*\)")
+TYP_LAYOUT_ARG_RE = re.compile(
+    r"\b(?:width|height|x|y|dx|dy|size|fontsize|radius|stroke|offset|spacing|leading|gap)\s*:\s*-?\d+(?:\.\d+)?(?:%|pt|em|mm|cm)?")
+TYP_RAW_RE = re.compile(r"#raw\s*(?:\([^)]*\)|\[[^\]]*\])")
+TYP_FENCE_RE = re.compile(r"```.*?```", re.S)
+
+
+def sanitize_typst(text):
+    text = TYP_FENCE_RE.sub(" ", text)
+    text = TYP_RAW_RE.sub(" ", text)
+    text = text.replace("://", "__URL__")
+    text = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+    text = text.replace("__URL__", "://")
+    text = TYP_CALL_ARG_RE.sub(" ", text)
+    text = TYP_SET_RE.sub(" ", text)
+    text = TYP_CONTENT_PREAMBLE_RE.sub("", text)
+    return TYP_LAYOUT_ARG_RE.sub("", text)
+
+
+def scan_typst_file(f, ignore_int_max):
+    raw = Path(f).read_text(encoding="utf-8", errors="replace")
+    text = sanitize_typst(raw)
+    text = RANGE_DASH_RE.sub(" to ", text)
+    found = []
+    for m in NUM_RE.finditer(text):
+        token, s, e = m.group(0), m.start(), m.end()
+        if s > 0 and (text[s - 1].isascii() and (text[s - 1].isalnum() or text[s - 1] in "._")):
+            continue
+        if s > 0 and text[s - 1] == "^":
+            continue
+        if e < len(text) and text[e].isascii() and text[e].isalnum():
+            continue
+        if DATE_SUFFIX_RE.match(text, e):
+            continue
+        if token.lstrip("-").isdigit() and 0 <= int(token) <= ignore_int_max:
+            continue
+        found.append({"token": token, "value": float(token), "file": str(Path(f)),
+                      "line": text.count("\n", 0, s) + 1,
+                      "ctx": text[max(0, s-24):min(len(text), e+24)].replace("\n", " ")})
+    return found
+
+
+def typst_figure_stems(typ_files):
+    stems = set()
+    for f in typ_files:
+        raw = Path(f).read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r'image\(\s*"([^"]+)"', raw):
+            base = m.group(1).split("/")[-1]
+            for ext in (".pdf", ".png", ".jpg", ".jpeg", ".svg"):
+                if base.lower().endswith(ext):
+                    base = base[:-len(ext)]
+                    break
+            if base and not base.startswith("."):
+                stems.add(base)
+    return stems
 
 
 def match_truth(val, truths, tol_rel, tol_abs):
@@ -246,17 +331,19 @@ def load_authority(ws):
     return entries
 
 
-def referenced_figure_stems(tex_files):
-    """论文 includegraphics 引用的图 stem（去扩展名；只追溯被引图，备用图不查）。"""
+def referenced_figure_stems(files):
+    """Return referenced figure stems from LaTeX includegraphics or Typst image()."""
     stems = set()
-    for f in tex_files:
+    for f in files:
         raw = Path(f).read_text(encoding="utf-8", errors="replace")
-        for m in GRAPHICS_RE.finditer(raw):
-            arg = m.group(0).split("{", 1)[-1].rstrip("}")
+        refs = [m.group(0).split("{", 1)[-1].rstrip("}")
+                for m in GRAPHICS_RE.finditer(raw)]
+        refs += [m.group(1) for m in re.finditer(r'image\(\s*"([^"]+)"', raw)]
+        for arg in refs:
             base = arg.split("/")[-1]
-            for ext in (".pdf", ".png", ".jpg", ".jpeg", ".eps"):
+            for ext in (".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg"):
                 if base.lower().endswith(ext):
-                    base = base[: -len(ext)]
+                    base = base[:-len(ext)]
                     break
             if base and not base.startswith("."):
                 stems.add(base)
@@ -307,11 +394,11 @@ def load_figure_allowlist(allow_file):
     return entries
 
 
-def trace_figures(figures_dir, tex_files, truths, strings, fig_allow, tol_rel, tol_abs):
+def trace_figures(figures_dir, stems, truths, strings, fig_allow, tol_rel, tol_abs):
     """被引图的图内数字 ↔ results/*.json 追溯。
     返回 (traced, untraced, checked, raster_skipped)。
     raster_skipped = 被引图只有位图（PNG/JPG，无文字层）无法程序化追溯的张数——WARN 提醒人工核对。"""
-    stems = referenced_figure_stems(tex_files)
+    stems = set(stems)
     fig_dir = Path(figures_dir)
     if not stems or not fig_dir.is_dir():
         return [], [], 0, []
@@ -378,10 +465,54 @@ def main(argv=None):
     if not paper_dir.is_dir():
         print(f"FAIL 论文目录不存在: {paper_dir}")
         return 2
+
+    manifest_file = gc.manifest_path(ws)
+    manifest = gc.load_manifest(ws)
+    manifest_present = manifest_file.is_file()
+    engine = gc.manifest_engine(ws) if manifest_present else "unknown"
     tex_files = sorted(paper_dir.rglob("*.tex"))
-    if not tex_files:
-        print(f"FAIL 论文目录下没有 .tex 文件: {paper_dir}")
-        return 2
+    typ_files_all = sorted(paper_dir.rglob("*.typ"))
+    scan_units, mode, fig_stems = [], None, set()
+    if manifest_present:
+        if engine == "latex":
+            mode, scan_fn = "latex", scan_tex_file
+            if not tex_files:
+                print(f"FAIL 声明 engine=latex 但论文目录无 .tex: {paper_dir}")
+                return 2
+            scan_units = [(f, scan_fn) for f in tex_files]
+            fig_stems = referenced_figure_stems(tex_files)
+        elif engine == "typst":
+            mode = "typst"
+            entry_rel = str(manifest.get("entry") or "paper/main.typ")
+            entry = ws / entry_rel
+            typ_files = typst_collect_files(entry)
+            if not typ_files:
+                typ_files = typ_files_all
+                print("WARN Typst 入口无法解析 include，退化为扫描 paper 下全部 .typ",
+                      file=sys.stderr)
+            if not typ_files:
+                print(f"FAIL 声明 engine=typst 但无 .typ 文件可扫描（入口 {entry}）")
+                return 2
+            scan_units = [(f, scan_typst_file) for f in typ_files]
+            fig_stems = typst_figure_stems(typ_files)
+        else:
+            print(f"FAIL 引擎无数字追溯适配器: {engine}")
+            return 1
+    elif tex_files:
+        mode, scan_fn = "latex", scan_tex_file
+        scan_units = [(f, scan_fn) for f in tex_files]
+        fig_stems = referenced_figure_stems(tex_files)
+        print("WARN 未发现 project.manifest.json，按 legacy latex 自动扫描 .tex",
+              file=sys.stderr)
+    elif typ_files_all:
+        mode = "typst"
+        scan_units = [(f, scan_typst_file) for f in typ_files_all]
+        fig_stems = typst_figure_stems(typ_files_all)
+        print("WARN 未发现 project.manifest.json，按 legacy typst 自动扫描 .typ",
+              file=sys.stderr)
+    else:
+        print(f"FAIL 论文目录下没有 .tex 也没有 .typ: {paper_dir}")
+        return 1
     if not results_dir.is_dir():
         print(f"WARN 结果目录不存在: {results_dir}，所有论文数字都将视为无出处", file=sys.stderr)
 
@@ -393,8 +524,8 @@ def main(argv=None):
     traced, allowed, untraced = [], [], []
     used_truths = set()
 
-    for f in tex_files:
-        for item in scan_tex_file(f, args.ignore_int_max):
+    for f, scan_fn in scan_units:
+        for item in scan_fn(f, args.ignore_int_max):
             src = match_truth(item["value"], truths, args.tol_rel, args.tol_abs)
             if src is not None:
                 item["status"] = "TRACED"
@@ -425,7 +556,7 @@ def main(argv=None):
     fig_traced, fig_untraced, fig_checked, fig_raster = [], [], 0, []
     if not args.no_figures:
         fig_traced, fig_untraced, fig_checked, fig_raster = trace_figures(
-            figures_dir, tex_files, truths, truth_strings, fig_allow,
+            figures_dir, fig_stems, truths, truth_strings, fig_allow,
             args.tol_rel, args.tol_abs)
 
     # 权威源校验：论文关键数字必须命中其专属权威文件（如 p4 数字必须存在于
@@ -454,6 +585,9 @@ def main(argv=None):
         "figure_untraced": len(fig_untraced),
     }
     report = {
+        "engine": engine,
+        "mode": mode,
+        "manifest": manifest_present,
         "summary": summary,
         "untraced": untraced[:200],
         "allowed": allowed[:100],
@@ -467,7 +601,7 @@ def main(argv=None):
     except Exception as exc:
         print(f"WARN 写报告失败: {report_file} ({exc})", file=sys.stderr)
 
-    print(f"论文目录: {paper_dir}（{len(tex_files)} 个 .tex）")
+    print(f"引擎: {engine}（mode={mode}, manifest={manifest_present}） 论文目录: {paper_dir}（{len(scan_units)} 个 {'.typ' if mode == 'typst' else '.tex'}）")
     print(f"结果目录: {results_dir}（真值 {len(truths)} 个）")
     print(f"论文数值 token: {summary['paper_numbers']} | TRACED {summary['traced']} | "
           f"ALLOWED {summary['allowed']} | UNTRACED {summary['untraced']} | UNUSED {summary['unused']}")
@@ -500,7 +634,7 @@ def main(argv=None):
         print(f"FAIL 存在 {len(untraced)} 个 UNTRACED / {len(authority_miss)} 条权威源未命中"
               f" / {len(fig_untraced)} 个图内数字失配（--strict）。报告: {report_file}")
         return 1
-    print(f"PASS 全部论文数字可追溯（权威源校验 {len(authority_entries)} 条通过，"
+    print(f"PASS 全部论文数字可追溯（engine={engine} mode={mode} manifest={manifest_present}，权威源校验 {len(authority_entries)} 条通过，"
           f"图内追溯 {fig_checked} 张）。报告: {report_file}")
     return 0
 

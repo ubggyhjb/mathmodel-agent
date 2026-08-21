@@ -3,7 +3,7 @@
 name: 6verity
 description: "数学建模竞赛最终验证和验收阶段，支持 Typst 和 LaTeX 双引擎。用于论文写完后检查章节数量、标题顺序、图表引用、数值一致性、论文数字与结果 JSON 双向追溯、盲评量化打分门禁与创新性附加分（国一冲刺诊断）、决策日志闭环、占位符、内部文件泄露、参考文献、代码可复现性、编译和提交就绪状态。"
 whenToUse: "数模工作流中论文写完后做最终验证、验收、数值一致性检查、编译检查、提交就绪检查时使用（通常由 1start-mathmodel 调用）。"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetch
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # 验证和验收（Typst / LaTeX）
@@ -35,6 +35,29 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 不要假设论文目录一定叫 `paper/`，也不要假设结果文件一定在项目根。若项目使用不同命名，按实际结构传参并在 `reports/VERIFY_REPORT.md` 中说明。
 
 ## 工作流程
+
+### Step 0: 引擎与工件清单（单一事实源，强制）
+
+所有程序门禁的引擎/入口/HIL_POLICY 只从项目清单 `project.manifest.json` 读取，不靠脚本猜、不靠对话记忆：
+
+```bash
+# <6verity skill> = 本 skill 实际安装目录（复制/移动后先探测 scripts/ 真实位置再拼接，禁止写死绝对路径）
+python <6verity skill>/scripts/project_manifest.py --workspace . --init     # 缺失则创建三份清单
+python <6verity skill>/scripts/project_manifest.py --workspace . --check    # 校验结构 + 工件哈希一致性
+```
+
+- 清单三件套：`project.manifest.json`（engine=latex|typst|word、入口、题目数、route.requested/actual——未知一律写 unknown 不编造、hil_policy、工具路径/版本）、`artifact_manifest.json`（results/figures/paper 输入 + main.pdf 输出的 SHA256）、`state/runtime_manifest.json`（每道门运行记录，run_all_gates.py 自动更新）。
+- 布局/引擎变更后跑 `--refresh` 重算哈希与工具版本；`--set engine=... --set entry=... --set hil_policy=...` 写声明字段。
+- 若 `engine=unknown`：所有引擎适配门禁在 `--strict` 下直接 FAIL，不判伪 PASS——先声明引擎再验收。
+- **一键聚合门禁（推荐入口，替代逐条手跑）**：
+
+```bash
+python <6verity skill>/scripts/run_all_gates.py --workspace . --strict
+# -> reports/gates/gates_report.json（manifest/layout/trace/style/decision/refs 六门）
+# 总体 PASS 硬条件：每门退出码 0 且确实执行、输入非空（layout 未执行 adapter / trace 数字为 0 = FAIL）
+```
+
+所有阈值单一事实源 = `<6verity skill>/style_policy.json`（摘要加粗率 5–15%、正文 0.5–8% 带、图有效字号 5/6pt、DPI 300、近空页 60 字符、底部空白 55% 等）。SKILL 文本与 persona 只引用该文件，禁止各自复制数字。
 
 
 ### Step 1: 运行文本质量门禁
@@ -147,7 +170,7 @@ python numeric_check.py --paper-dir "$PAPER_DIR" --results "$RESULTS_FILE"
 ### Step 5c: 跨文件一致性与语义矛盾检查
 
 - **跨文件一致性**：同一实体（运动员/样本）在 problem1/2/3/4 各 JSON 中的核心数值（滞空时间、位移、成绩等）必须一致；若两个模块算出的同一人特征不同，说明参数口径不统一（历史教训：速度窗口 window=3 vs window=5 导致两套运动学值），必须统一口径后重跑。verify_all.py 的跨文件守卫覆盖此项，但验收时应人工抽查至少 1 个实体逐字段比对。
-- **过期值排查**：任何代码重跑后，用 grep 在 paper/ 全文搜索旧值的数字串，确认无残留（历史教训：优先级表抄了过期 REPORT，量级合理但已失效）。
+- **过期值排查**：任何代码重跑后，用 grep 在 paper/ 全文搜索旧值的数字串，确认无残留（历史教训：优先级表抄了过期 REPORT，量级合理但已失效）。搜索范围必须同时覆盖 `reports/RESULTS_REPORT.md`、`code/`（尤其 make_figures 等作图脚本）与 `figures/figure_manifest.json`：任何一处残留旧模型数字（旧最优值、旧系数、旧扰动口径）即 FAIL，更新后重跑对应脚本（历史教训：P3 改成 BMI-only 多因素 AFT 后 RESULTS_REPORT 仍保留 bmi=+0.523/16.6/17.4/20.0，而 trace 只扫 paper 查不到 REPORT 里的过期值）。
 - **语义矛盾检查**：逐节通读，找"建议与结论打架"的句子——例如某节说"增加预蹲深度"、另一节结论是"预蹲越深成绩越差（r=-0.69）"。发现矛盾必须改其一并在验收报告记录。此类矛盾数值脚本查不出，只能靠通读。
 - **统计口径核对**：相关/回归的样本量 n、均值口径（训练集 or 全部）、检验单双侧声明，逐项与 results JSON 核对，并按 `references` 知识库"统计口径条款"五条自查。
 
@@ -159,7 +182,7 @@ python numeric_check.py --paper-dir "$PAPER_DIR" --results "$RESULTS_FILE"
 python <6verity skill>/scripts/trace_numbers.py --workspace . --strict
 ```
 
-- 脚本抽取论文全部 .tex 的数值 token（跳过注释、lstlisting/verbatim/minted 代码块、LaTeX 长度参数与日期），与 `results/*.json` 的全部数值叶子做容差匹配（默认相对容差 3e-4），输出 `trace_report.json`：
+- 脚本按 `project.manifest.json` 的 engine 选择适配器：engine=latex 扫全部 .tex（原行为）；engine=typst 扫 .typ（含 #include 递归、image() 图源）；engine=word 或 unknown 且无对应源文件 → 明确 FAIL，不返回 PASS（先 `project_manifest.py --set engine=...` 声明）。报告含 engine/mode/manifest 字段。
   - `TRACED`：命中结果 JSON，有出处；
   - `PAPER_ONLY`：论文有、结果无，但已在白名单登记来源（内置常量 + 工作区 `trace_allowlist.json`）；
   - `UNTRACED`：论文有、结果无、白名单也没有 → `--strict` 下直接 FAIL；
@@ -179,6 +202,7 @@ python <6verity skill>/scripts/trace_numbers.py --workspace . --strict
 - 正文引用标记（Typst 的 `@label`/`#super`，LaTeX 的 `\cite{}`）是否能对应到真实参考文献。
 - 中文论文 caption、表题、摘要语言保持中文；英文论文保持英文。
 - 每个子问题的主方法至少 1 条真实可核实文献支撑（与 `references/literature.md` 对应）；全文方法无文献的论文判 WARN 并回 2analysis 补检索。
+- **参考文献程序核验（强制）**：`python <6verity skill>/scripts/verify_refs.py --workspace . --strict`——解析全部 \cite/#super 键与 references 条目，悬空引用 FAIL；每条经 OpenAlex/Crossref 按标题/作者/DOI 核验，unverified/missing 在 strict 下 FAIL；网络不可用时该门明确 FAIL（附"离线核验不可用"），不得把未核验当作通过。竞赛期间只允许学术/官方数据源（参赛规则第 5 条）。
 - 若论文使用了外部数据：`references/data_sources.md` 必须存在，每条含来源 URL + 抓取日期；论文引用数值必须命中 `results/external_data.json`（trace 已兜底）；URL 抽查可访问，抓取日期在竞赛窗口内。来源缺失或无法核实 → WARN 并回 2analysis 补检索或上报用户。
 - 选定的模板入口是否保留所选比赛模板的必要封面、摘要、编号、页眉页脚或提交格式。
 - 不要把模板结构误删成普通空白文档。
@@ -204,32 +228,35 @@ xelatex 需跑两遍解决目录和交叉引用。
 
 ### Step 8: PDF 视觉检查
 
-**先跑程序化排版审计**（越界/重叠/近空页/异常行高四查，比人眼全面）：
+**先跑程序化排版审计（四查 + 引擎无关门禁）**：
 
 ```bash
+python <6verity skill>/scripts/layout_gate.py --workspace . --strict
+# 引擎无关共享 PDF 检查（入口/页面尺寸/底部空白/近空页/被引图源有效字号 <5pt FAIL、5-6pt WARN）
+# + LaTeX/Typst 源适配器（include/image 引用存在、图源/论文新鲜度、caption）
+# → reports/gates/layout_gate.json（含 supported/executed/coverage）
+# word/unknown 引擎无适配器：--strict 下直接 FAIL，不判伪 PASS
 python <6verity skill>/scripts/layout_audit.py --workspace . --strict
+# 越界>15pt FAIL、8-15pt WARN、行重叠、近空页、异常行高（边距按模板 geometry 解析）
 ```
 
-- FAIL（越界 >15pt、页面尺寸异常、图片越界）→ 修复后重编译重跑；多为行内不可断 token 硬越界，用 `\emergencystretch=2em`（模板已内置）或 `\allowbreak` 处理。
-- WARN（小越界 8–15pt、行重叠、近空页）→ 行重叠多是公式字体提取假阳性，渲染对应页视觉复核即可。
+- layout_gate FAIL（include/image 引用缺失、重复 include、被引图源有效字号 <5pt、main.pdf 早于源文件或被引图源、未知引擎未适配）→ 修复后重编译重跑。
+- layout_audit FAIL（越界 >15pt、页面尺寸异常、图片越界）→ 修复后重编译重跑；多为行内不可断 token 硬越界，用 `\emergencystretch=2em`（模板已内置）或 `\allowbreak` 处理。
+- WARN（小越界 8–15pt、行重叠、近空页、底部大面积空白、page_fill 偏空/偏满、图源有效字号 5-6pt）→ 行重叠多是公式字体提取假阳性，渲染对应页视觉复核即可；近空页/底部空白/page_fill 偏空按“先放大核心图 10–20%、禁止塞字/缩行距”处置（见 5writing 留白纪律）；字号 WARN 应尽量修复（并排图改单列、重绘源图）。page_fill 与 `scripts/whitespace_qa.py` 一律用**行带占用率+最大连续空带**口径（12pt 条带，空带 >25% 内容高即偏空），禁用“内容纵向跨度”判留白（见 whitespace_qa.py 头部说明）。
+- **paper-layout-qa 的 check_layout.py（2026-08 已并入五项：标点禁则/表格居中/边距对称/空白页/字体嵌入，硬版心 510pt，跳过宽表页防误报）**：改完 tex/图并双遍编译后，必须跑 `python <paper-layout-qa>/tools/check_layout.py <main.pdf>` 且 **HIGH 清零**（日志层 Overfull>15pt 与 Missing character 必须清零；修法见 5writing“排版细节纪律”），再宣布 6verity PASS。它与 layout_gate/layout_audit 互补：前者管“集中式质检”，六门管“门禁基建/规范/追溯”。
 
 然后做视觉检查：
 
 如果模型有视觉能力，必须把编译后的 PDF 每页导出为 PNG 并逐页查看。这个步骤用于发现纯文本扫描和编译器无法发现的版式错误。
 
-优先使用系统已有工具导出页面 PNG；不要为了视觉检查引入沉重依赖。可选命令示例：
+**渲染页新鲜度纪律（2026-08 补丁，防止把旧版当当前版）**：每次编译后必须**重新**渲染页面——先清空输出目录（推荐 `_tmp/pdf-pages`），渲染完成后核对输出目录 mtime 晚于 main.pdf。禁止沿用上一次编译留下的旧 PNG；任何后续环节（含主代理自查、盲评席位复核）引用渲染页之前，必须核对其 mtime ≥ main.pdf，否则该渲染页一律视为过期证据、不得作为当前版结论依据（历史教训：盲评席读了 2:58 的旧渲染页，把已更新的 main.pdf 判为“未反映修订”）。视觉复核优先直接对 main.pdf 用 PyMuPDF/fitz 现渲染关键页，而不是继承历史 PNG。
+
+优先使用系统已有工具导出页面 PNG；不要为了视觉检查引入沉重依赖。用本 skill 的 `scripts/visual_tools.py` 解析可用的光栅化工具（候选：pdftoppm（MiKTeX 自带）→ mgs/gswin64c（Ghostscript）→ mutool → magick → inkscape；探测结果以本机 PATH 为准，不做"某工具未装"式主观断言）：
 
 ```bash
-mkdir -p _tmp/pdf-pages
-if command -v pdftoppm >/dev/null 2>&1; then
-  pdftoppm -png -r 160 "$OUTPUT_PDF" _tmp/pdf-pages/page
-elif command -v mutool >/dev/null 2>&1; then
-  mutool draw -r 160 -o _tmp/pdf-pages/page-%03d.png "$OUTPUT_PDF"
-elif command -v magick >/dev/null 2>&1; then
-  magick -density 160 "$OUTPUT_PDF" _tmp/pdf-pages/page-%03d.png
-else
-  echo "No PDF rasterizer found; record visual check as not run."
-fi
+python <6verity skill>/scripts/visual_tools.py --probe     # 打印解析到的 (kind, path, version)
+python <6verity skill>/scripts/visual_tools.py render --pdf "$OUTPUT_PDF" --out-dir _tmp/pdf-pages --dpi 160
+# 无可用光栅化工具时该脚本退出码 1，此时在 VERIFY_REPORT 记录"未执行视觉检查"原因
 ```
 
 导出后逐页检查：
@@ -251,7 +278,9 @@ fi
 
 验收阶段最后做一次独立评审，模拟竞赛评委视角发现前序步骤漏掉的问题。评审必须量化：出分、出清单，不许只有"总体不错"式评语。
 
-1. **派评审子代理**：用 `subagent` 工具派 1 个评审子代理，prompt 自包含（论文 PDF/正文路径、赛题路径、结果 JSON 路径、下方打分表与评分标准）。子代理与主代理不共享上下文，只拿论文产物本身，模拟盲评。评审必须返回：逐维度分数、总分、按条编号的问题清单（每条给出位置与理由）+ **覆盖声明**（本轮实际读取了哪些文件、抽查了哪几处论文数字 vs JSON、PDF 页数核对结果）。**评审深度底线**：每轮必须通读全部 .tex；复评轮可只精读改动章节，但必须重读摘要/结论/附录，且对上一轮问题清单逐条给出核验证据（文件+行+内容）。只写"已修复"而无逐条证据的评审视为无效评审，重派子代理——历史教训：3 分钟浅读复评产出的裁决分不可信。**单评审纪律**：评审子代理运行期间禁止重复派发第二个评审（替代性重复）。首轮详细盲评耗时 20–40 分钟属正常——不要因耗时怀疑卡住；怀疑卡住时先用 subagent 状态查询工具确认 running，等待完成通知，只有子代理明确报错或无结果返回时才允许重派。历史教训：主代理曾把跑了 21 分钟的高质量评审误判为卡死，又派了一个 3 分钟的浅读评审并把两分数取均值——现已同时禁止替代性重复与取均值。**评审等待期（派完评审后、结果返回前）**：不要干等——在派发评审的同一个回合内完成与评审不冲突的收尾活：①程序门禁复跑（`trace_numbers.py --strict`、`verify_all.py`、`check_decision_log.py`），把结果写进 VERIFY_REPORT 检查项表；②提交包准备（支撑材料清单：code/、results/、figures/；承诺书 AI 披露提醒；清理 _tmp/、__pycache__/、.idea 等垃圾目录）；③VERIFY_REPORT 骨架先行（检查项、编译、图表引用等已确认部分先填）。等待期禁止重复派发评审、禁止宣布 PASS、禁止修改论文正文（避免与评审返回后的修复冲突）。子代理完成通知到达后，再按第 4/5 步处理结果。
+1. **派 3 席独立评审子代理（陪审团）**：用 `subagent` 工具并行派 3 个互不共享上下文的评审子代理——①通审席（完整 8 维）；②正确性与可复现席（模型/结果/代码/追溯）；③创新与决策效用席（差异化、结论可用性）。每个 prompt 自包含（论文 PDF/正文路径、赛题路径、结果 JSON 路径、下方打分表与评分标准），子代理只拿论文产物本身，模拟盲评。每席必须返回：逐维度分数、总分、按条编号的问题清单（每条给出位置与理由）+ **覆盖声明**（本轮实际读取了哪些文件、抽查了哪几处论文数字 vs JSON、PDF 页数核对结果）。**评审深度底线**：每轮必须通读全部 .tex；复评轮可只精读改动章节，但必须重读摘要/结论/附录，且对上一轮问题清单逐条给出核验证据（文件+行+内容）。只写"已修复"而无逐条证据的评审视为无效评审，重派对应席——历史教训：3 分钟浅读复评产出的裁决分不可信。**三席纪律**：三席之间禁止互相引用结论、禁止主代理向席位透露其他席位的分数；每轮三席分数与清单全部落盘 `reports/blind_scores.json`（分数轨迹），判定以三席总分各自对照阈值（任一席 <70 即定向修复），禁止取均值。有条件时用 workflow 工具的 provider/model 覆盖实现"评者 ≠ 写者"（跨模型评审）；无条件时至少保证三席上下文隔离。首轮详细盲评每席耗时 20–40 分钟属正常——不要因耗时怀疑卡住；怀疑卡住时先用 subagent 状态查询工具确认 running，等待完成通知，只有子代理明确报错或无结果返回时才允许重派。历史教训：主代理曾把跑了 21 分钟的高质量评审误判为卡死，又派了 3 分钟浅读评审并把分数取均值——禁止替代性重复与取均值。**席位执行受限纪律（2026-08 补丁）**：评审子代理运行 verify_all/求解脚本时若被执行环境拦截（沙箱预检失败、权限不足等），必须把"未运行、退出码不可得"如实写进 coverage，禁止凭旧 gate 报告宣称"本轮已运行"，也禁止把"自己没能运行"直接判为论文 FAIL；主代理负责在修复后真实复跑全部相关命令，把 stdout 与退出码落盘 `runs/`（文件名标注轮次），并把该日志路径写入对应 issue 的 resolution。**评审等待期（派完评审后、结果返回前）**：不要干等——在派发评审的同一个回合内完成与评审不冲突的收尾活：①程序门禁复跑（`run_all_gates.py --strict`），把结果写进 VERIFY_REPORT 检查项表；②提交包准备（支撑材料清单：code/、results/、figures/；承诺书 AI 披露提醒；清理 _tmp/、__pycache__/、.idea 等垃圾目录）；③VERIFY_REPORT 骨架先行（检查项、编译、图表引用等已确认部分先填）。等待期禁止重复派发评审、禁止宣布 PASS、禁止修改论文正文（避免与评审返回后的修复冲突）。三席完成通知全部到达后，再按第 4/5 步处理结果。
+
+1b. **盲评销号链数据契约（check_decision_log 程序校验，违规 FAIL）**：`reports/blind_scores.json` 每条终评记录必须含 `{seat, trip, dims(8维), total, gate, issues[], addon}`；**issues 里每个 id 必须出现在 decision_log.open_issues 且 status=closed、resolution 非空**——只写"已修复"没有 resolution（文件+行）的判 WARN，ID 未登记或未 closed 判 FAIL。三席（seat1_overall / seat2_correctness / seat3_innovation）终评必须齐全且各席 total ≥70，缺席或 <70 判 FAIL。分数轨迹禁止取均值，以各席终评单独判定。**席位结论原文落盘（2026-08 补丁）**：席位返回的 gate/coverage/headline/issues 文字必须原样写入 blind_scores.json，主代理不得改写席位 gate 结论；修复完成后如需说明最终状态，只允许**追加** `post_fix_gate` / `post_fix_verified` 字段，禁止替换原始 gate 字符串。席位只给问题编号、未给问题描述时，主代理必须向该席追问补全（文件+行+现象）后再落盘。
 2. **固定打分表**（总分 100，权重固定不许改）：
 
    | 维度 | 权重 |
@@ -280,10 +309,10 @@ fi
 - **附录代码对应性**：`A_code.tex`（或附录）必须包含论文正文**实际使用**算法的核心代码（阶段检测、滤波、集成预测、Bootstrap 等至少其一，可从 `code/` 的真实脚本摘录），禁止放与正文无关的通用占位代码（如教科书式 `read_csv('data.csv')` + `train_test_split` 示例）。评审会据此质疑代码真实性——这是提交前必查项。
 - **摘要完整性**：摘要必须覆盖每个子问题的关键结论数字；正文表格中出现的主体（如所有运动者）在摘要中的口径必须与正文一致（不遗漏、不多出、数字相同）。按 5writing"30 秒评审路径"逐项自检：①逐问锚点"针对问题X"；②每问有精确数值（带单位）；③模型名具体；④创新点 1–2 句带对比证据；⑤验证证据（误差/灵敏度/交叉验证）。**摘要公式清零**：摘要出现含"="的公式本体即 FAIL（style_audit 检查项 15；93 篇官方优秀语料零公式，模型公式文字点名）。
 - **口径统一性**：全文样本量、均值口径、检验方向等表述必须全局一致——grep 全文搜索旧口径数字（如"10名"vs"8名"）逐一替换，不留任何残留。
-- **决策日志完整性**：`python <6verity skill>/scripts/check_decision_log.py --workspace .` 必须 PASS——6 阶段齐全、完成状态成前缀、每个已完成阶段有决策记录、open_issues 全部 closed。FAIL 说明流程状态机坏了，先修日志再谈提交。
+- **决策日志完整性**：`python <6verity skill>/scripts/check_decision_log.py --workspace .` 必须 PASS——核心 6 阶段齐全（新项目含可选的头脑风暴 brainstorm-mathmodel 阶段则 7 阶段齐全）、完成状态成前缀、每个已完成阶段有决策记录、open_issues 全部 closed、**freshness（last_updated 晚于全部产物）与阶段产物绑定（done 阶段的关键产物存在）**。FAIL 说明流程状态机坏了，先修日志再谈提交。
 - **竞赛规则与 AI 披露合规（2026 试行）**：按 `references` 知识库"竞赛规则与 AI 使用披露"小节自查——论文参考文献前必须有"AI 工具使用声明"且用官方定句（未使用："本参赛队在竞赛过程中未使用任何 AI 工具。"；使用："本参赛队在竞赛过程中使用了 AI 工具，主要用于【简要用途】，详细使用情况见支撑材料。"）；使用 AI 的必须按 `ai_use_report_template.md` 生成详情并以官方文件名 **"AI 工具使用详情.pdf" 放入支撑材料 ZIP**（内容 4 项：工具名称/版本或型号、使用目的和环节、提示方式与过程说明、采纳修改核验情况（语言润色除外））；AI 只能用于执行类环节，核心建模与分析必须参赛队主导、AI 内容逐项核验；参考文献必须真实可核实；严禁虚构或篡改数据（由 verify_all.py + trace_numbers.py 程序兜底）。
 - **2026 格式规范 checklist**（逐项核对论文 PDF，任何一项不满足 = FAIL）：① 无目录页；② 标题+摘要+关键词同页且摘要 ≤1 页，该页页码"1"页脚居中；③ 正文 ≤30 页（附录不计）；④ 电子版为单一 PDF ≤20MB 且第一页 = 摘要页（无承诺书/编号页）；⑤ 附录含"支撑材料文件列表"且与提交的支撑材料 ZIP（≤20MB）一一对应（ZIP 须含全部源码、自主查阅的数据资料、AI 工具使用详情.pdf）；⑥ 附录源码**全部完整**（非"核心代码摘录"）且可运行、与正文算法一致——程序化兜底见下方"图表排版强调门"的检查项 12（code/ 下每个源文件都必须被 lstinputlisting/verbatiminput 全文引入，缺一 FAIL）；⑦ 匿名扫描（无学校/姓名/赛区）；⑧ 参考文献格式规范；⑨ 纸质版打印提示：承诺书第 1 页、编号专用页第 2 页（官方模板，队伍自填）、左侧装订，内容与电子版一致。
-- **图表排版强调门（程序化）**：跑 `python <6verity skill>/scripts/style_audit.py --workspace . --strict` 必须 PASS——摘要页完整且页码"1"、无目录、摘要含内容性加粗且**以结论短语为主**（优先级：结论句 > 模型/方法名 > 引导语 > 关键数值；裸数字加粗占比 >50% 即 FAIL——关键数值必须包进结论短语如"仅到达 27 个端点"）、正文加粗密度在 0.5-8% 带内、嵌图 DPI≥300、图注在图下方、表格全部三线表、正文 ≤30 页、AI 声明在参考文献前、附录含支撑材料文件列表。任何 FAIL 必须修复后重跑；WARN 逐条给处置说明（修复或声明接受）。此门与 layout_audit（越界/重叠）互补：style_audit 管"规范"，layout_audit 管"物理排版"。
+- **图表排版强调门（程序化）**：跑 `python <6verity skill>/scripts/style_audit.py --workspace . --strict` 必须 PASS——摘要页完整且页码"1"、无目录、**摘要内容性加粗率真实计算（5–15% 硬带，style_policy.json）**且以结论短语为主（裸数字加粗占比 >50% 即 FAIL）、正文加粗密度 0.5-8% 带、嵌图 DPI≥300、图注在图下方、表格全部三线表、正文 ≤30 页、AI 声明在参考文献前且**官方定句逐字匹配**、附录含支撑材料文件列表、**附录源码全文按内容 sha256 与 code/ 逐一比对（命令存在性不算数）**。任何 FAIL 必须修复后重跑；WARN 逐条给处置说明（修复或声明接受）。此门与 layout_gate/layout_audit 互补：style_audit 管"规范"，layout_gate 管"引用/字号/新鲜度"，layout_audit 管"物理排版"。
 - **2026-08 补丁的三项新增检查（style_audit 检查项 12/13/14，全部纳入 FAIL 口径）**：⑫ 附录源码全文（见上⑥的程序化版本——历史教训：附录只放 4 段"核心摘录"被认定违规，旧门只查"含支撑材料列表"查不出）；⑬ **交付物新鲜度**——main.pdf 必须晚于全部 .tex 与 figures/*.pdf，否则判定"门禁结果不代表最终版"直接 FAIL（历史教训：改完 tex/图/结果后没重编译没重跑门，交付物与"全 PASS"报告对不上；results/*.json 晚于图 → WARN 提醒重生成图）；⑭ **正文裸数字加粗**——摘要页之外的正文/表格里逐个加粗数字（如表格中 `\textbf{15.88}`）按行级判定为违规（短语加粗如"仅到达 27 个端点"不误报）。
 - **最后一版必须重跑全部程序门禁（2026-08 补丁，硬性纪律）**：验收报告里的每个 PASS 必须对应"此刻磁盘上的最终版"。任何 tex/图/代码/结果文件在跑完门禁之后又被修改，必须重新编译 + 全部门禁重跑（style_audit 的新鲜度检查会直接 FAIL 提醒）；禁止把旧结果写进 VERIFY_REPORT 冒充最终版验收。历史教训：优化会话在 23:52–23:58 改了 tex 和图，最后一版编译后零门禁复跑，交付物（图重叠、55pt 越界、附录违规、裸数字加粗）全部存在于"全 PASS"报告里。
 - **提交包核验（交付物清单+一致性）**：竞赛提交文件（按附件模板填写的 result*.xlsx 等）必须与 results/ 权威 JSON/xlsx 同源一致：逐个打开提交文件核对行数（表头+数据行）、非空值个数、关键数值与 results/*.json 一致；提交目录中不得残留空模板或错拷贝。任何不一致 = FAIL。历史教训：提交目录里躺着"同一文件的错拷贝 + 9 行空模板"，论文与提交文件两套数据，直接掉档。

@@ -2,7 +2,7 @@
 name: doctor
 description: "环境检查与安装向导。检查数学建模工作流所需的全部依赖是否已安装，对缺失项提供安装命令，并在用户确认后执行安装。手动触发。"
 whenToUse: "数模工作流报环境错误（python/typst/xelatex/drawio 缺失、编译失败、依赖报错）时手动触发。"
-allowed-tools: Bash(*), Read, Write
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # Doctor — 环境检查与安装向导
@@ -15,8 +15,8 @@ allowed-tools: Bash(*), Read, Write
 
 | 工具 | 用途 | 检测/调用（本机 Windows，pwsh 探测） |
 | --- | --- | --- |
-| `xelatex` | 论文编译（LaTeX 引擎，中文模板） | `Get-Command xelatex`（已入 PATH）；稳妥用全路径 `C:\Users\Administrator\AppData\Local\Programs\MiKTeX\miktex\bin\x64\xelatex.exe` |
-| `typst` | 论文编译（Typst 引擎，0.15.1 已装） | 全路径 `C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Packages\Typst.Typst_Microsoft.Winget.Source_8wekyb3d8bbwe\typst-x86_64-pc-windows-msvc\typst.exe`（PATH 待 DSH 进程重启） |
+| `xelatex` | 论文编译（LaTeX 引擎，中文模板） | `Get-Command xelatex`（已入 PATH）；稳妥用全路径 `C:\Users\<用户名>\AppData\Local\Programs\MiKTeX\miktex\bin\x64\xelatex.exe` |
+| `typst` | 论文编译（Typst 引擎，0.15.1 已装） | 全路径 `C:\Users\<用户名>\AppData\Local\Microsoft\WinGet\Packages\Typst.Typst_Microsoft.Winget.Source_8wekyb3d8bbwe\typst-x86_64-pc-windows-msvc\typst.exe`（PATH 待 DSH 进程重启） |
 | `mmdc` | mermaid 流程图渲染 SVG/PNG（4drawio） | `Get-Command mmdc`（npm 全局已装，实测出图 ✓） |
 | `inkscape` | SVG↔PDF 无损转换（图源路由） | 全路径 `C:\Program Files\Inkscape\bin\inkscape.exe`（已实测 ✓） |
 | `python` | 数值计算与图表（3coding-visual） | `Get-Command python`（3.14.0） |

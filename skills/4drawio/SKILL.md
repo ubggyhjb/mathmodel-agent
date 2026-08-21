@@ -2,7 +2,7 @@
 name: 4drawio
 description: "数学建模非数据型图示绘制阶段。根据 ANALYSIS_MODELING_REPORT.md、RESULTS_REPORT.md 和已有 figures/ 生成技术路线图、子问题求解流程图、模型结构图、数据处理流程图等（本机首选 TikZ 渲染，DrawIO 源文件保留可编辑性），并导出论文可引用 PDF。"
 whenToUse: "数模工作流中论文需要技术路线图、求解流程图、架构图等非数据型图示时使用（通常由 1start-mathmodel 调用）。"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetch
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # DrawIO 非数据图示绘制

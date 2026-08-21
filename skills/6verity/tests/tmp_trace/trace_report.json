@@ -1,0 +1,24 @@
+{
+  "engine": "typst",
+  "mode": "typst",
+  "manifest": true,
+  "summary": {
+    "paper_numbers": 3,
+    "traced": 3,
+    "allowed": 0,
+    "untraced": 0,
+    "unused": 0,
+    "authority_checked": 0,
+    "authority_miss": 0,
+    "figure_checked": 0,
+    "figure_raster_skipped": 0,
+    "figure_traced": 0,
+    "figure_untraced": 0
+  },
+  "untraced": [],
+  "allowed": [],
+  "unused": [],
+  "authority_miss": [],
+  "figure_untraced": [],
+  "figure_raster_skipped": []
+}

@@ -2,7 +2,7 @@
 name: 3coding-visual
 description: "数学建模编程实现与数据图表生成阶段。根据 ANALYSIS_MODELING_REPORT.md 编写可复现代码、运行求解、验证约束、输出 RESULTS_REPORT.md 并生成论文可用的数据驱动图表 PDF。"
 whenToUse: "数模工作流中完成建模设计后进入编程实现、运行求解、生成数据图表时使用（通常由 1start-mathmodel 调用）。"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetch
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # 编程实现与数据图表生成
@@ -69,8 +69,8 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 
 1. 改 problemX.py → 重跑 problemX 及所有依赖其结果的下游脚本（如 problem2 依赖 problem1 的特征、problem3/4 依赖 problem2）。
 2. 重跑后立即运行 `code/verify_all.py`——若某处仍引用旧值，跨文件一致性守卫会 FAIL。
-3. 论文已写的前提下改任何结果：**必须**用 grep 在 paper/ 全文搜索被改数字的旧值，逐处替换或核实（历史教训：优先级表抄了过期 REPORT，数字合理但已失效——量级守卫查不出"过期值"，只有全链路比对能查）。
-4. RESULTS_REPORT.md 同步更新，且与论文同一数字。
+3. 论文已写的前提下改任何结果：**必须**用 grep 在 paper/ 全文搜索被改数字的旧值，逐处替换或核实（历史教训：优先级表抄了过期 REPORT，数字合理但已失效——量级守卫查不出"过期值"，只有全链路比对能查）。搜索范围同时覆盖 `reports/RESULTS_REPORT.md`、`code/`（尤其作图脚本中的硬编码旧值）与 `figures/figure_manifest.json`，任何残留都必须处理。
+4. RESULTS_REPORT.md 同步更新，且与论文同一数字。**模型口径更换时（如 AFT 三变量 → BMI-only）必须整节重写旧结果段**，禁止"旧段保留 + 新段追加"（历史教训：RESULTS_REPORT 残留 bmi=+0.523/16.6/17.4/20.0 与新版 JSON 冲突，盲评直接扣 trace_appendix 分）。
 5. 重编译 PDF 并确认页数/时间戳变化。
 
 口诀：**动一处，跑全链；改一数，查全文。**
@@ -81,10 +81,20 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 - 实验脚本运行后必须立即打开主结果文件核对：关键字段仍为基线值（如 `t_adj=300/360`、主结果数字与论文一致），核对结果写进 RESULTS_REPORT.md。
 - 历史教训（本机真实发生）：sensitivity 的 S7 循环复用 `solve_mine()`（该函数会写盘），循环末次的扰动值（`t_adj=330/390`）覆盖了 p4 主结果，导致论文数字与提交文件两套数据。根因是"实验复用生产写入函数 + 写后不核验"。
 
+### Step 2e: 阶段内 QC 子代理门（P1/P2，只读验收者）
+
+本阶段内设两道独立质检，派只读 subagent 执行，**FAIL 必须由本阶段执行者修复后重派复验，主代理不得自行覆盖失败结论**：
+
+- **P1 最小可运行结果门**（全量计算与正式出图前）：子代理只拿 ANALYSIS_MODELING_REPORT 的任务清单 + code/ + results/，检查：每个子问题代码可运行、结果 JSON 存在且通过 verify_all.py、关键数字与建模报告口径一致、无 NaN/Inf。任一 FAIL → 修复后重跑，禁止先画图。
+- **P2 编程终检门**（正式图完成后）：子代理检查：结果表、三类图（原始数据/过程/结果）覆盖全部子问题且不少于约定数量、图数据与 results JSON 一致、复现清单（种子/依赖版本/运行命令）齐全。
+- 两道门的结论写入 RESULTS_REPORT.md 的"质检"小节。
+
 ### Step 3: 结果文件格式
 
 
-AI 在实现、求解和作图过程中，必须把关键中间过程保存成数据并做好记录，例如清洗后的数据摘要、模型参数、迭代历史、约束检查、灵敏度分析过程、图表所用数据和运行日志。中间数据优先保存到 `figures/` 或 `code/outputs/`，并在 `reports/RESULTS_REPORT.md` 中说明文件用途。
+AI 在实现、求解和作图过程中，必须把关键中间过程保存成数据并做好记录，例如清洗后的数据摘要、模型参数、迭代历史、约束检查、灵敏度分析过程、图表所用数据和运行日志。
+
+**目录契约（v2）**：`results/` 只放论文可引用的真值 JSON/xlsx；灵敏度/参数扫描/交叉验证等实验输出写 `runs/<run_id>/`；`figures/` 只放图和图源元数据（figure_manifest.json）。中间数据不再散落到 `figures/` 或 `code/outputs/`——历史口径作废。
 
 `reports/RESULTS_REPORT.md` 推荐结构：
 
@@ -123,3 +133,5 @@ AI 在实现、求解和作图过程中，必须把关键中间过程保存成�
 - 不生成流程图/架构图/路线图。
 
 图表可以由主程序或独立脚本生成，不强制固定脚本名。无论采用哪种方式，都必须保存图表对应的数据来源和生成记录。
+
+**作图脚本禁硬编码结果值（2026-08 补丁）**：图内所有数字必须从 `results/*.json` 读取，禁止把论文数值硬编码进作图脚本；改模型重跑后，先 grep `code/` 清理被替换的旧值，再重跑作图脚本（历史教训：make_figures 残留旧时点 `16.6/17.4/20.0` 硬编码，盲评扫到即判"图与结果不同步"）。

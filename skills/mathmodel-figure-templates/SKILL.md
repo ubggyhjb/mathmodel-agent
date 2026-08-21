@@ -2,7 +2,7 @@
 name: mathmodel-figure-templates
 description: Use this skill in the MathModel LaTeX sandbox when the user asks to reproduce built-in scientific visualization templates, especially prompts from the Improve tab mentioning $mathmodel-figure-templates, 科研绘图模板, SHAP蜂群柱状图, 配对云雨图, 交叉验证ROC, 泰勒图, 相关矩阵组合图, 预测真实值边缘分布图, TPE调参3D曲面, 下三角相关矩阵半边小提琴图, 分组环形热图, 城市公园降温组合图, or Nature和弦图. It provides ready-to-run Python scripts bundled inside the skill.
 whenToUse: "数模论文需要炫酷科研绘图（云雨图、泰勒图、ROC、SHAP、和弦图等）时使用。"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # MathModel Figure Templates

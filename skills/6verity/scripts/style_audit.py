@@ -31,9 +31,99 @@
 
 exit code: 有 FAIL = 1，全 PASS（允许 WARN）= 0。
 """
-import sys, os, re, argparse
+import sys, os, re, argparse, json
+from pathlib import Path
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _SCRIPT_DIR)
+import gate_common as gc
 
 import fitz
+
+
+def load_style_policy():
+    policy = gc.load_policy()
+    if not policy:
+        p = Path(_SCRIPT_DIR).parent / "style_policy.json"
+        try:
+            with p.open(encoding="utf-8") as fh:
+                policy = json.load(fh)
+        except Exception:
+            policy = {}
+    return policy
+
+
+def autodetect_engine(ws):
+    if any(Path(ws).rglob("*.typ")):
+        return "typst"
+    if any(Path(ws, "paper").rglob("*.tex")):
+        return "latex"
+    if any(Path(ws).rglob("*.docx")):
+        return "word"
+    return "unknown"
+
+
+def abstract_bold_metrics(sp1, body_sz):
+    keyword = False
+    bold_chars = body_chars = 0
+    bare = total = 0
+    labels = {"关键词", "关键词：", "关键词:", "关键字", "关键字：", "关键字:"}
+    for s in sp1:
+        text = s.get("text", "")
+        stripped = text.strip()
+        sz = round(s.get("size", 0), 1)
+        if not keyword and (stripped in labels or re.fullmatch(r"关键词\s*[:：]?", stripped)):
+            keyword = True
+            continue
+        if keyword or sz >= 15 or (sz >= 13 and stripped == "摘要"):
+            continue
+        if 9 <= sz <= 13:
+            n = len(text.strip())
+            body_chars += n
+            if isbold(s) and sz <= body_sz + 1.5 and n >= 1:
+                bold_chars += n
+                total += n
+                if re.fullmatch(r"[0-9.%\-\u2013~\u2248+,\s]*", text):
+                    bare += n
+    return bold_chars, body_chars, bare / max(1, total)
+
+
+def appendix_hash_check(ws, texfiles, policy, entry_file=None):
+    code_dir = Path(ws) / "code"
+    exts = tuple(policy.get("appendix", {}).get("full_source_exts", []))
+    if not code_dir.is_dir():
+        return [], 0, "无 code/ 目录"
+    code_files = sorted(p for p in code_dir.iterdir()
+                        if p.is_file() and p.suffix in exts
+                        and not p.name.startswith((".", "_")))
+    included_hashes = set()
+    unresolved = []
+    cmd_re = re.compile(r"\\(?:lstinputlisting|verbatiminput)(?:\[[^\]]*\])?\{([^{}]+)\}")
+    for tf_raw in texfiles:
+        tf = Path(tf_raw)
+        try:
+            text = tf.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for match in cmd_re.finditer(text):
+            raw = match.group(1).strip()
+            target = Path(raw)
+            # LaTeX 相对路径按编译工作目录（main.tex 所在目录）解析，其次引用文件目录，再其次工作区根
+            candidates = []
+            if entry_file is not None:
+                candidates.append(entry_file.parent / target)
+            candidates += [tf.parent / target, Path(ws) / target]
+            resolved = next((p for p in candidates if p.is_file()), None)
+            if resolved is None:
+                unresolved.append(raw)
+            else:
+                try:
+                    included_hashes.add(gc.sha256_file(resolved))
+                except OSError:
+                    unresolved.append(raw)
+    missing = [p.name for p in code_files if gc.sha256_file(p) not in included_hashes]
+    missing.extend("unresolved:" + x for x in unresolved)
+    return sorted(set(missing)), len(code_files), None
 
 
 def spans(d, i):
@@ -54,16 +144,24 @@ def page_text(d, i):
 
 
 def main():
+    gc.force_utf8()
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace", default=".")
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--report", default=None)
     args = ap.parse_args()
-    ws = args.workspace
+    ws = os.path.abspath(args.workspace)
+    report_file = os.path.abspath(args.report or os.path.join(ws, "reports", "gates", "style_audit.json"))
+    policy = load_style_policy()
+    manifest_engine = gc.manifest_engine(ws)
+    engine = manifest_engine if manifest_engine != "unknown" else autodetect_engine(ws)
+    coverage = {"typ_files": len(list(Path(ws).rglob("*.typ"))), "skipped": []}
     pdf = os.path.join(ws, "paper", "main.pdf")
     if not os.path.exists(pdf):
         print("FAIL: paper/main.pdf 不存在（先编译论文再跑本门）")
         sys.exit(1)
     d = fitz.open(pdf)
+    coverage["pdf_pages"] = d.page_count
     fails, warns = [], []
 
     # 正文字号众数（用于区分标题/正文/标签）
@@ -101,24 +199,22 @@ def main():
     if not any("目录页" in f for f in fails):
         print("PASS: 无目录页")
 
-    # 4 摘要内容性加粗
-    labels = {"摘要", "关键词", "关键词：", "关键字", "关键字：", "关键字:", "关键词:"}
-    cb = [s for s in sp1 if isbold(s) and round(s["size"], 1) <= body_sz + 1.5
-          and s["text"].strip() not in labels and len(s["text"].strip()) >= 2
-          and round(s["size"], 1) < body_sz + 5]
-    if not cb:
-        (fails if args.strict else warns).append(
-            "摘要无内容性加粗（官方通行做法：结论句/引导语/模型名/关键数值加粗，5-15%；E030 达 20%+）")
+    # 4 摘要内容性加粗与真实字符比例（第一页不是摘要页则整项 SKIP）
+    abstract_ratio = None
+    abstract_bare_ratio = None
+    if not (len(p1.strip()) > 50 and "摘" in p1[:300] and re.search(r"关键词|关键字", p1)):
+        coverage["skipped"].append("abstract_bold_ratio:not_abstract_page")
     else:
-        print(f"PASS: 摘要内容性加粗 {len(cb)} 处")
-        # 裸数字加粗检查：官方加粗以结论句为主；一串纯数字加粗 = 等于没加粗（本模式犯过的真实错误）
-        pure = [s for s in cb if re.fullmatch(r"[0-9.%\-\u2013~\u2248+,\s]*", s["text"])]
-        ratio = len(pure) / max(1, len(cb))
-        if ratio > 0.5:
-            (fails if args.strict else warns).append(
-                f"摘要裸数字加粗占比 {ratio:.0%}（应把关键数值包进结论短语整体加粗，如'仅到达 27 个端点'，而非逐个加粗数字）")
+        bold_chars, body_chars, abstract_bare_ratio = abstract_bold_metrics(sp1, body_sz)
+        abstract_ratio = bold_chars / max(1, body_chars)
+        if abstract_ratio < policy.get("abstract", {}).get("bold_ratio_min", 0.05) or abstract_ratio > policy.get("abstract", {}).get("bold_ratio_max", 0.15):
+            fails.append(f"摘要内容性加粗率 {abstract_ratio:.1%}（应在 5%-15%）")
         else:
-            print(f"PASS: 摘要加粗以结论短语为主（裸数字占比 {ratio:.0%}）")
+            print(f"PASS: 摘要内容性加粗率 {abstract_ratio:.1%}（5%-15%）")
+        if abstract_bare_ratio > policy.get("abstract", {}).get("bare_digit_ratio_max", 0.5):
+            warns.append(f"摘要裸数字加粗占比 {abstract_bare_ratio:.0%}（应把关键数值包进结论短语整体加粗）")
+        else:
+            print(f"PASS: 摘要加粗以结论短语为主（裸数字占比 {abstract_bare_ratio:.0%}）")
 
     # 5 正文加粗密度带
     bb = bt = 0
@@ -129,13 +225,15 @@ def main():
                 bt += len(s["text"])
                 if isbold(s) and sz <= body_sz + 1.5 and len(s["text"].strip()) >= 2:
                     bb += len(s["text"])
-    ratio = 100 * bb / max(1, bt)
-    if ratio <= 0.05:
-        warns.append("正文加粗密度 ≈0%（官方中位 0.5-2%，关键结论句应加粗）")
-    elif ratio > 8:
-        warns.append(f"正文加粗密度 {ratio:.1f}% 超官方上限带 8%")
+    body_bold_ratio = bb / max(1, bt)
+    body_min = policy.get("body", {}).get("bold_ratio_min", 0.005)
+    body_max = policy.get("body", {}).get("bold_ratio_max", 0.08)
+    if body_bold_ratio < body_min:
+        warns.append(f"正文加粗密度 {body_bold_ratio:.1%} 低于 {body_min:.1%}")
+    elif body_bold_ratio > body_max:
+        warns.append(f"正文加粗密度 {body_bold_ratio:.1%} 超上限 {body_max:.1%}")
     else:
-        print(f"PASS: 正文加粗密度 {ratio:.1f}%（官方带 0.5-8%）")
+        print(f"PASS: 正文加粗密度 {body_bold_ratio:.1%}（官方带 {body_min:.1%}-{body_max:.0%}）")
 
     # 14 正文裸数字加粗：官方口径是"关键数值包进结论短语"，表里逐个加粗数字等于没加粗。
     # 只认结果型数字（≥3 位整数 或 ≥2 位小数），排除 6.1.1 / 1.1 这类标题编号。
@@ -191,8 +289,9 @@ def main():
                 aspect = max(w, h) / max(min(w, h), 1)
                 if aspect >= 5 and min(w, h) <= 60:
                     continue  # colorbar 渐变条带，非内容位图
-                if dpi < 299:
-                    fails.append(f"第{i+1}页嵌图有效 DPI {dpi:.0f} < 300（位图必须 300dpi 级，矢量图不检查）")
+                dpi_min = policy.get("figures", {}).get("dpi_min", 300)
+                if dpi < dpi_min - 1:
+                    fails.append(f"第{i+1}页嵌图有效 DPI {dpi:.0f} < {dpi_min}（位图必须达标，矢量图不检查）")
             except Exception:
                 pass
     if not any("DPI" in f for f in fails):
@@ -209,10 +308,11 @@ def main():
         if ref_page:
             break
     body_pages = (ref_page or d.page_count + 1) - 2
-    if body_pages > 30:
-        fails.append(f"正文 {body_pages} 页 > 30（2026 规范）")
+    max_pages = policy.get("body", {}).get("max_pages", 30)
+    if body_pages > max_pages:
+        fails.append(f"正文 {body_pages} 页 > {max_pages}（规范）")
     else:
-        print(f"PASS: 正文 {body_pages} 页 ≤ 30")
+        print(f"PASS: 正文 {body_pages} 页 ≤ {max_pages}")
 
     # 10 AI 声明
     ai_page = None
@@ -225,7 +325,18 @@ def main():
     elif ref_page and ai_page > ref_page:
         fails.append("AI 声明位于参考文献之后（必须在其前）")
     else:
-        print(f"PASS: AI 工具使用声明在第 {ai_page} 页（参考文献前）")
+        ai_text = re.sub(r"\s+", "", page_text(d, ai_page - 1))
+        ai_policy = policy.get("ai_decl", {})
+        not_used = re.sub(r"\s+", "", ai_policy.get("not_used", ""))
+        used_prefix = re.sub(r"\s+", "", ai_policy.get("used_prefix", ""))
+        used_suffix = re.sub(r"\s+", "", ai_policy.get("used_suffix", ""))
+        valid_ai = (not_used and not_used in ai_text) or (used_prefix and used_prefix in ai_text and used_suffix and used_suffix in ai_text)
+        if not valid_ai:
+            fails.append("AI 工具使用声明内容不符合 policy 定句")
+        elif ref_page and ai_page > ref_page:
+            fails.append("AI 声明位于参考文献之后（必须在其前）")
+        else:
+            print(f"PASS: AI 工具使用声明在第 {ai_page} 页（内容及位置合规）")
 
     # 11 支撑材料文件列表
     full = "".join(page_text(d, i) for i in range(d.page_count))
@@ -247,7 +358,11 @@ def main():
         with open(tf, encoding="utf-8") as fh:
             alltex += f"\n%%FILE%%{tf}\n" + fh.read()
 
-    # 7 图注位置
+    if engine == "typst":
+        coverage["skipped"].extend(["latex:figure_caption", "latex:three_line_tables", "latex:appendix_full_source", "latex:abstract_formula", "latex:typeset_details"])
+    elif not texfiles:
+        coverage["skipped"].extend(["latex:figure_caption", "latex:three_line_tables", "latex:appendix_full_source", "latex:abstract_formula", "latex:typeset_details"])
+
     fig_bad = []
     for m in re.finditer(r"\\begin\{figure\}(.*?)\\end\{figure\}", alltex, re.S):
         body = m.group(1)
@@ -273,29 +388,20 @@ def main():
     else:
         print("PASS: 表格全部三线表")
 
-    # 12 附录源码全文（2026 规范：建模所用全部完整可运行源码，缺程序可能取消评奖资格）
-    # 历史教训：附录只放 4 段"核心摘录"被认定违规——code/ 下每个源码文件都必须被
-    # lstinputlisting / verbatiminput 完整引入（引入即全文，摘录不算）。
-    code_dir = os.path.join(ws, "code")
-    code_exts = (".py", ".m", ".R", ".jl", ".cpp", ".c", ".java", ".go", ".rs")
-    if os.path.isdir(code_dir):
-        code_files = [f for f in os.listdir(code_dir)
-                      if f.endswith(code_exts) and not f.startswith((".", "_"))]
-        missing_code = []
-        for cf in sorted(code_files):
-            base = os.path.splitext(cf)[0]
-            pat = (r"\\(?:lstinputlisting|verbatiminput)(?:\[[^\]]*\])?\{[^}]*"
-                   + re.escape(base) + r"(?=[.}/]|$|[^A-Za-z0-9_])")
-            if not re.search(pat, alltex):
-                missing_code.append(cf)
-        if missing_code:
-            (fails if args.strict else warns).append(
-                "附录未包含全部源程序全文: " + ", ".join(missing_code)
-                + "（2026 规范：建模所用全部完整可运行源码须入附录）")
-        else:
-            print(f"PASS: 附录含全部源程序全文（{len(code_files)} 个）")
+    # 12 附录源码全文：按引用文件内容 hash 校验
+    if engine == "typst" or not texfiles:
+        print("INFO 跳过 LaTeX 附录源码全文检查（由 layout_gate 或其他门禁承担）")
     else:
-        print("INFO 无 code/ 目录，跳过附录源码全文检查")
+        missing_code, code_count, no_code = appendix_hash_check(
+            ws, texfiles, policy,
+            entry_file=(Path(ws) / "paper" / "main.tex") if (Path(ws) / "paper" / "main.tex").is_file() else None)
+        if no_code:
+            print("INFO 无 code/ 目录，跳过附录源码全文检查")
+        elif missing_code:
+            fails.append("附录未包含全部源程序全文: " + ", ".join(missing_code)
+                         + "（要求引入内容 sha256 完全相同）")
+        else:
+            print(f"PASS: 附录含全部源程序全文（{code_count} 个，内容 hash 命中）")
 
     # 13 交付物新鲜度：门禁结果必须对应"最终版"。
     # 历史教训：改完 tex/图/结果后没重新编译+没重跑门，交付物与"全 PASS"报告对不上。
@@ -333,7 +439,8 @@ def main():
     # 模型公式一律文字点名（如"推进速度由流量守恒确定"）；参数符号与行内数值记号保留。
     abs_m = re.search(r"\\abstractcn\{%(.*?)\}\{%", alltex, re.S)
     if abs_m:
-        abs_eqs = re.findall(r"\$[^$]*=[^$]*\$", abs_m.group(1))
+        # 只把"成对的 $...$ 片段内含 ="判为公式本体；跨段吞并的误匹配（旧 regex 缺陷）不再发生
+        abs_eqs = [seg for seg in re.findall(r"\$[^$]*\$", abs_m.group(1)) if "=" in seg]
         if abs_eqs:
             fails.append(f"摘要出现公式本体 {len(abs_eqs)} 处（{abs_eqs[0][:20]}...）"
                          "——官方优秀语料零公式，模型公式应文字点名，参数符号与数值可作行内记号保留")
@@ -341,6 +448,24 @@ def main():
             print("PASS: 摘要无公式本体（公式文字点名）")
     else:
         print("INFO 未找到 \\abstractcn 块，跳过摘要公式检查")
+
+    # 15b 摘要 CJK 字数硬带（600-900，style_policy）与"针对问题X"锚点（规范 4 个）
+    if abs_m:
+        abs_text = abs_m.group(1)
+        cjk_len = len(re.findall(r"[\u4e00-\u9fff]", abs_text))
+        anchors = re.findall(r"(?:针对)?问题[一二三四五六七八九十\d]", abs_text)
+        coverage["abstract_cjk_len"] = cjk_len
+        coverage["abstract_anchors"] = len(anchors)
+        lo = int(policy.get("abstract", {}).get("min_chars", 600))
+        hi = int(policy.get("abstract", {}).get("max_chars", 900))
+        if cjk_len < lo or cjk_len > hi:
+            fails.append(f"摘要 CJK 字数 {cjk_len} 不在 {lo}-{hi}（5writing 硬带）")
+        else:
+            print(f"PASS: 摘要 CJK 字数 {cjk_len}（{lo}-{hi}）")
+        if len(anchors) != 4:
+            warns.append(f"摘要'针对问题X'锚点 {len(anchors)} 个（规范 4 个；总起段应并入问题一段）")
+        else:
+            print("PASS: 摘要逐问锚点 4 个")
 
     # 16 LaTeX 排版细节（吸收 PaperFit/paper-typeset 的实证规则，只取中文论文适用项）：
     # 16a \ref/\cite 前必须用不可断空格 ~（"图 7"断行 = 最常见排版缺陷）
@@ -381,6 +506,27 @@ def main():
     else:
         print("PASS: 无英文直引号")
 
+    result_pass = not fails
+    report = {
+        "gate": "style_audit",
+        "engine": engine,
+        "coverage": {**coverage, "abstract_bold_ratio": abstract_ratio,
+                     "content_bold_ratio": abstract_ratio,
+                     "abstract_bare_digit_ratio": abstract_bare_ratio,
+                     "body_bold_ratio": body_bold_ratio},
+        "content_bold_ratio": abstract_ratio,
+        "body_bold_ratio": body_bold_ratio,
+        "abstract_bare_digit_ratio": abstract_bare_ratio,
+        "fails": fails,
+        "warns": warns,
+        "summary": {"pass": result_pass, "strict": bool(args.strict)},
+        "ran_at": gc.iso_now(),
+        "report": report_file,
+    }
+    try:
+        gc.save_json(report_file, report)
+    except Exception as exc:
+        warns.append(f"报告写入失败: {exc}")
     print()
     for w in warns:
         print("WARN:", w)

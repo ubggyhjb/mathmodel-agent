@@ -34,11 +34,45 @@ def force_utf8():
             pass
 
 
-ML, MR, MT, MB = 70.87, 524.4, 70.87, 771.0  # A4 2.5cm 边距
+import gate_common as gc
+
+POLICY = gc.load_policy()
+_MARGIN = float(POLICY.get("layout", {}).get("margin_min_cm", 2.5)) * 72 / 2.54
+_OVER_FAIL = float(POLICY.get("layout", {}).get("overrun_fail_pt", 15))
+_OVER_WARN = float(POLICY.get("layout", {}).get("overrun_warn_pt", 8))
+_NEAR = int(POLICY.get("pages", {}).get("near_empty_chars", 60))
+_LINE_WARN = float(POLICY.get("layout", {}).get("line_height_warn_pt", 60))
+
+def template_margins(pdf_path):
+    """Read geometry from the sibling LaTeX entry; return 边界 (left, right, top, bottom)。
+    失败时按 policy 最小边距 2.5cm 计算边界。"""
+    root = Path(pdf_path).parent.parent
+    tex = root / "paper" / "main.tex"
+    if not tex.is_file():
+        tex = root / "main.tex"
+    try:
+        text = tex.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    import re
+    to_pt = {"cm": 72 / 2.54, "mm": 72 / 25.4, "pt": 1.0, "in": 72.0}
+    vals = {k.lower(): float(v) * to_pt[u.lower()]
+            for k, v, u in re.findall(r"(left|right|top|bottom)\s*=\s*([0-9.]+)\s*(cm|mm|pt|in)",
+                                      text, re.I)}
+    left = vals.get("left", _MARGIN)
+    right = 595.27 - vals.get("right", _MARGIN)
+    top = vals.get("top", _MARGIN)
+    bottom = 841.89 - vals.get("bottom", _MARGIN)
+    return left, right, top, bottom
+
+
+ML, MR, MT, MB = _MARGIN, 595.27 - _MARGIN, _MARGIN, 841.89 - _MARGIN
 CJK_PUNCT = "，。、；：！？）》”’〉」』】"  # 行尾全角标点：字宽含尾部空白，视觉墨迹在边距内
 
 
 def audit(pdf_path):
+    global ML, MR, MT, MB
+    ML, MR, MT, MB = template_margins(pdf_path)
     doc = fitz.open(str(pdf_path))
     fails, warns = [], []
     if doc.page_count == 0:
@@ -65,13 +99,13 @@ def audit(pdf_path):
                 continue
             for side, over in (("左", ML - bb.x0), ("右", bb.x1 - MR),
                                ("上", MT - bb.y0), ("下", bb.y1 - MB)):
-                if over > 15:
+                if over > _OVER_FAIL:
                     fails.append(f"p{pno+1}: {side}越界 {over:.0f}pt [{txt[:22]}]")
-                elif over > 8:
+                elif over > _OVER_WARN:
                     if side == "右" and txt and txt[-1] in CJK_PUNCT and over <= 12:
                         continue  # 全角标点字宽伪影：TeX 日志无 overfull，视觉正常
                     warns.append(f"p{pno+1}: {side}越界 {over:.1f}pt [{txt[:22]}]")
-            if bb.height > 60:
+            if bb.height > _LINE_WARN:
                 warns.append(f"p{pno+1}: 异常行高 {bb.height:.0f}pt [{txt[:22]}]")
         for i in range(len(lines)):
             for j in range(i + 1, len(lines)):
@@ -82,10 +116,10 @@ def audit(pdf_path):
                     warns.append(f"p{pno+1}: 行重叠（多为公式假阳性） [{ta[:12]}] vs [{tb[:12]}]")
         for xref in [x[0] for x in page.get_images(full=True)]:
             for rct in page.get_image_rects(xref):
-                if rct.x1 - MR > 15 or ML - rct.x0 > 15 or rct.y1 - MB > 15:
+                if rct.x1 - MR > _OVER_FAIL or ML - rct.x0 > _OVER_FAIL or rct.y1 - MB > _OVER_FAIL:
                     fails.append(f"p{pno+1}: 图片越界 {rct}")
         text = page.get_text().strip()
-        if len(text) < 60 and pno != 0:
+        if len(text) < _NEAR and pno != 0:
             warns.append(f"p{pno+1}: 近空页（{len(text)} 字符）")
     doc.close()
     return fails, warns

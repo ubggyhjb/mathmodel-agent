@@ -1,8 +1,8 @@
 ---
 name: 2analysis-modeling
-description: "数学建模赛题分析与建模设计合并阶段。用于读取题面和附件，完成子问题拆解、数据理解、假设预检、变量定义、模型公式、目标函数、约束条件、求解策略和可交给代码实现的建模报告。"
+description: "数学建模赛题分析与建模设计合并阶段。用于读取题面和附件，先承接头脑风暴候选路线，再完成子问题拆解、数据理解、假设预检、变量定义、模型公式、目标函数、约束条件、求解策略和可交给代码实现的建模报告。"
 whenToUse: "数模工作流中完成赛题分析、建模设计、子问题拆解、模型选型时使用（通常由 1start-mathmodel 调用）。"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetch
+allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
 # 赛题分析与建模设计
@@ -11,22 +11,25 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 
 如需领域判断，读取 `../references/math_modeling_norms.md` 中的“赛题理解与子问题识别”“假设与模型建立”和“题型防错速查”小节。该文件只作为规范知识库，不替代本阶段的分析报告结构。
 
-## 文献检索（本环境用 web_search 工具）
+## 文献检索（本环境用 web_search 工具 + verify_refs 核验）
 
-在确定建模路线前，用 `web_search` 检索与赛题相关的建模方法与文献（中英文关键词都要搜），为每个子问题的主模型选择提供至少 1-2 篇真实文献依据（标题、作者、年份、来源 URL），记入 `references/literature.md` 并在 ANALYSIS_MODELING_REPORT.md 的对应子问题小节标注引用；论文写作阶段必须 \cite 这些文献。模型选择有据可依，禁止凭空宣称"文献表明"，禁止全文无文献的选型。
+在确定建模路线前，用 `web_search` 检索与赛题相关的建模方法与文献（中英文关键词都要搜），为每个子问题的主模型选择提供至少 1-2 篇真实文献依据（标题、作者、年份、来源 URL/DOI），记入 `references/literature.md`（模板：`<references skill>/literature.md`，复制到工作区后填写）并在 ANALYSIS_MODELING_REPORT.md 的对应子问题小节标注引用；论文写作阶段必须 \cite 这些文献。
+
+**检索预算硬上限（防无限搜索烧 token）**：最多 5 次 web_search、最终保留 5–8 篇即停；中英文按需分配（英文学术 2–3 次 + 中文期刊 2–3 次）。**6verity 阶段 `verify_refs.py --strict` 会逐条 OpenAlex/Crossref 核验**——核验不过的条目不得进入论文参考文献。模型选择有据可依，禁止凭空宣称"文献表明"，禁止全文无文献的选型。
 
 ## 外部数据检索（题面数据不够时）
 
 有些题的模型参数/常数/指标题面不给（价格指数、弹性模量、气象、人口、汇率、传染病参数等）。先判定需求：数据理解阶段列出"外部数据清单"（字段、用途、为什么题面没有）。按权威优先级检索：
 
 1. **权威优先级**：官方统计部门（国家统计局 data.stats.gov.cn）与政府部委 > 国际组织（World Bank / WHO / FAO / IMF）> 带 DOI 的学术文献参数 > 行业数据库（同花顺/东方财富、中国气象局、行业协会）> 百科（最后手段，且必须再找第二来源印证）。
-2. **下载与留证**：用 `web_search` 找入口 + `pwsh`/`Invoke-WebRequest` 抓取；每个数据点记录到 `references/data_sources.md`：字段 | 数值 | 来源 URL | 抓取日期 | 用途。
+2. **下载与留证**：用 `web_search` 找入口 + `pwsh`/`Invoke-WebRequest` 抓取；每个数据点记录到 `references/data_sources.md`（模板：`<references skill>/data_sources.md`，复制到工作区后填写）：字段 | 数值 | 来源 URL | 抓取日期 | 用途。
 3. **数字闭环（强制）**：外部数据数值必须写入 `results/external_data.json`，论文只准引用这个 JSON——trace 门自动覆盖外部数据；网页数字禁止直接进论文（否则 trace 判 UNTRACED）。
 4. **找不到就上报**：权威来源缺失/需登录 → `ask_user_question` 上报用户（要什么数据、影响哪个子问题、可选替代），不硬凑、不编造"看起来合理"的数值。
 
 ## 必须产出
 
 在当前工作目录的 `reports/` 子目录中创建或更新：
+- `reports/BRAINSTORM_REPORT.md`（若尚未由 `brainstorm-mathmodel` 产出）：头脑风暴候选路线、主选/备选与淘汰理由。
 
 - `reports/ANALYSIS_MODELING_REPORT.md`：
   - 赛题分析、子问题拆解、数据与附件理解、评价标准、关键歧义和假设预检。
@@ -36,6 +39,18 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 
 
 ## 工作流程
+
+
+### Step 0: 头脑风暴（brainstorming，先发散，再收敛）
+
+在写详细建模报告前，先按 `../brainstorm-mathmodel/SKILL.md` 执行一轮头脑风暴，产出 `reports/BRAINSTORM_REPORT.md`。若该报告已存在，则直接读入并沿用其结论；若不存在，则在本阶段开头补做。
+
+头脑风暴的目标不是直接定模型，而是：
+
+- 每个子问题至少 3 条候选路线；
+- 覆盖主流解、改进/进阶解、交叉/创新解、反直觉/压力测试解；
+- 对数据可得性、可实现性、区分度、主要风险做初步评估；
+- 给出主选/备选，并把淘汰理由写入报告，供差异化审查引用。
 
 
 ### Step 1: 子问题拆解
@@ -107,12 +122,13 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetc
 然后给出总体路线：
 
 ```text
-题面 -> 数据清洗(EDA) -> 子问题一模型 -> 子问题二模型 -> 。。。。 -> 结果检验 -> 论文展示
+题面 -> 头脑风暴(候选路线) -> 数据清洗(EDA) -> 子问题一模型 -> 子问题二模型 -> 。。。。 -> 结果检验 -> 论文展示
 ```
 
 ### Step 3b: 差异化审查（国一冲刺，防"众数解"）
 
 建模路线确定前，必须在 `ANALYSIS_MODELING_REPORT.md` 中写"差异化审查"小节：
+这里要引用 `reports/BRAINSTORM_REPORT.md` 中已经筛出的候选路线，把“众数解/改进解/创新解”的取舍落到每个子问题上。
 
 1. **众数解清单**：对每个子问题，明确写出"大多数队伍会怎么做"的 1-2 条路线。LLM 的第一反应往往就是众数解本身——写下来才看得见它。
 2. **逐题决策**：每条路线二选一——①跟随众数：写明理由（数据适配、复杂度约束），这不可耻但必须有意识；②偏离众数：必须给出偏离依据——真实文献（≥1 条，记入 `references/literature.md` 并在论文 \cite）或数据/机理证据。

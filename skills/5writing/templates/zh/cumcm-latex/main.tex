@@ -33,7 +33,8 @@
 \IfFontExistsTF{KaiTi}{\newCJKfontfamily\kaishu{KaiTi}}{\newCJKfontfamily\kaishu{Kaiti SC}}
 % 西文正文与代码等宽字体：
 \IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
-\IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{}
+\IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{%
+  \IfFontExistsTF{Consolas}{\setmonofont{Consolas}}{}} % Windows 回退 Consolas：覆盖希腊/≈，避免附录源码 Missing character
 
 % ---------- 正文：12.05pt，首行缩进 2em，两端对齐 ----------
 % 行距实证：官方优秀论文行距/字号比 1.30-1.42（2023 年中位 1.42）；
@@ -108,13 +109,13 @@
   {\heiti\bfseries 关键词：}#2\par
   \newpage
 }
-% \kw{...}：内容性加粗（黑体）。官方展示论文通行做法，优先级 = 结论句 > 模型/方法名 > 引导语 > 关键数值
-% （全库统计：结论句 78 > 数值 51 > 术语 40 > 引导语 9）：
-%   正确：\kw{仅到达 27 个端点}、\kw{绕行无水备选路线}、\kw{早一分钟通知带来非线性安全收益}
-%   错误：把一串裸数字逐个加粗（\kw{15.88}、\kw{12.17}、\kw{18.10}）——全加粗=没加粗
+% \kw{...}：内容性加粗（中文黑体 + 西文加粗）。官方展示论文通行做法，三类对象才允许使用：
+%   ① 最终答案（“建议时点为 16.3/15.0/15.2/22.0 周”）；② 最关键模型结论（“高 BMI 孕妇浓度整体偏低、达标更晚”）；
+%   ③ 需要评委记住的性能指标（“AUPRC 提升 4.1 倍”）。
+%   禁止：普通 p 值/统计量加粗、方法名单独加粗、一串裸数字逐个加粗；一句话最多 1-2 处 \kw。
 % 关键数值必须包进结论短语整体加粗，每问 ≤2 处；摘要加粗率 5-15%；正文关键结论句密度 1-4%。
 % 自查：删掉某个加粗后句意不受损，它就不该加粗。只用于内容强调，标题/标签不要用 \kw。
-\newcommand{\kw}[1]{\textbf{#1}}
+\newcommand{\kw}[1]{{\heiti\bfseries #1}}
 % \referencescn：参考文献节（不带编号，无目录）
 \newcommand{\referencescn}{%
   \input{references}%

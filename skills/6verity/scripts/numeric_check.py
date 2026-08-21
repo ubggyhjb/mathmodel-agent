@@ -116,24 +116,12 @@ def extract_numbers_from(path: Path) -> set[str]:
 
 
 def main() -> int:
-    args = sys.argv[1:]
-    if "--help" in args or "-h" in args or len(args) < 2:
-        print(__doc__)
-        return 0
-    paper_dir = None
-    results_path = None
-    it = iter(args)
-    for a in it:
-        if a == "--paper-dir":
-            paper_dir = Path(next(it))
-        elif a == "--results":
-            results_path = Path(next(it))
-        else:
-            print(f"未知参数: {a}")
-            return 2
-    if paper_dir is None or results_path is None:
-        print("缺少 --paper-dir 或 --results")
-        return 2
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--paper-dir", required=True)
+    ap.add_argument("--results", required=True)
+    ap.add_argument("--strict", action="store_true", help="论文中缺失于结果记录的数值视为 FAIL")
+    ns = ap.parse_args()
+    paper_dir, results_path = Path(ns.paper_dir), Path(ns.results)
 
     print(f"论文目录: {paper_dir}")
     print(f"结果记录: {results_path}")
@@ -172,9 +160,7 @@ def main() -> int:
         print("[INFO] 结果记录中的数值全部被论文引用。")
     print("=" * 60)
     print("结论: 本检查为启发式，WARN 项需人工确认后决定是否修改论文。")
-    return 0
-
-
+    return 1 if ns.strict and missing else 0
 def _walk_values(node):
     if isinstance(node, dict):
         for v in node.values():
