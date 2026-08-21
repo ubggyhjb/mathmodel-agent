@@ -1,14 +1,31 @@
 {
   "schema_version": 1,
+  "_v4_severity": {
+    "rule": "每条阈值带严重级：must（官方硬规则=strict FAIL）/ recommended（优秀经验带=WARN+视觉复核）/ diagnostic（诊断信息=仅报告）。仅 official must 允许硬 FAIL。",
+    "mapping": {
+      "abstract.size_chars_600_900": "recommended",
+      "abstract.bold_ratio_5_15": "recommended",
+      "abstract.zero_bold": "must",
+      "abstract.formula": "must",
+      "body.bold_ratio_0_5_8": "diagnostic",
+      "figures.min_effective_font_fail_pt": "must",
+      "figures.min_effective_font_warn_pt": "recommended",
+      "pages.page_size_a4": "must",
+      "pages.near_empty": "recommended",
+      "layout.overrun_fail_pt": "must",
+      "three_line_tables": "recommended（contest_profile 可放行非三线样式）"
+    }
+  },
   "abstract": {
     "min_chars": 600,
     "max_chars": 900,
+    "severity": "recommended",
     "paragraphs": 4,
     "bold_ratio_min": 0.05,
     "bold_ratio_max": 0.15,
     "bare_digit_ratio_max": 0.5,
     "no_formula": true,
-    "note": "加粗率 = 摘要内容性加粗字符数 / 摘要正文字符数（不含标题与关键词标签）；5-15% 为硬带，官方 E030 20-25% 为上限标杆。"
+    "note": "加粗率 = 摘要内容性加粗字符数 / 摘要正文字符数（不含标题与关键词标签）；5-15%、600-900 为推荐带（v4：偏离 → WARN 不 FAIL，官方 E030 20-25% 为上限标杆）；摘要 0 处加粗 或 CJK <400/>1500 才 FAIL。"
   },
   "body": {
     "bold_ratio_min": 0.005,

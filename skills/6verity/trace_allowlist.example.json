@@ -1,8 +1,8 @@
 {
-  "_comment": "工作区白名单模板：论文数字不在 results/*.json 中时在此登记来源。复制本文件为 <workspace>/trace_allowlist.json 使用。每条必须写非空 note（空 note 视为未说明来源 = FAIL）；value 按数值匹配，pattern 按数字原文整串匹配。",
+  "_comment": "工作区白名单模板：论文数字不在 results/*.json 中时在此登记来源。复制本文件为 <workspace>/trace_allowlist.json 使用。每条必须写非空 note（空 note 视为未说明来源 = FAIL）；value 按数值匹配，pattern 按数字原文整串匹配。v4（任务书 28 条）：value 条目建议带 context_regex——论文 token 所在上下文必须命中才允许，防止'无来源的 20 因系统认为它是 ±20% 扰动'被静默放过；不带 context_regex 的 value 条目为显式用户授权（仍允许，但建议补上下文）。内置白名单（显著性水平/重力加速度/年份/±10%/±20%/100% 等）一律带上下文约束，上下文不匹配即 UNTRACED。",
   "entries": [
-    {"value": 0.05, "note": "显著性水平 0.05（统计惯例）"},
-    {"value": 33, "note": "示例：题面给定的关键节点数 33——按实际赛题改成真实依据"},
+    {"value": 0.05, "note": "显著性水平 0.05（统计惯例）", "context_regex": "显著|0\\.05"},
+    {"value": 33, "note": "示例：题面给定的关键节点数 33——按实际赛题改成真实依据", "context_regex": "节点|33"},
     {"pattern": "^0\\.00[0-9]+$", "note": "示例：论文 p<0.00x 表示法，逐条换成对应结果 JSON 中的具体 p 值与口径说明"}
   ]
 }

@@ -46,6 +46,8 @@ apmcm, default, mcm
 
 论文中的所有数值图表结论必须来自 `reports/RESULTS_REPORT.md` 或 `figures/*`。不得编造、估算或使用不同的四舍五入方式。
 
+**v4 数值同源（任务书 7 条）**：关键数值**禁止手抄**。运行 `6verity/scripts/generated_values.py --workspace <项目根>` 由 `results/*.json` 自动生成 `paper/generated_values.tex`（每值一个 `\newcommand{\QTwoGTwoLow}{14.2}`），论文正文只写 `\QTwoGTwoLow`——数字天然绑定结果 key，trace 无需再猜"14.2 来自哪个 JSON"；任何结果更新后重生成该文件，禁止手工编辑它。
+
 
 ## 工作流
 
@@ -166,7 +168,9 @@ fig_pipeline.pdf -> 数据预处理/方法节
 
 英文论文使用英文图注。
 
-**Figure Contract（作图前定论证逻辑，禁止先画后编理由）**：每张正式图在放入论文前必须先写一句"本图要证明什么结论"（写入 `figures/figure_manifest.json` 的 purpose 字段），再选图型；成图后登记 `{id, kind: data|concept, source, renderer, paper_refs, purpose}`。未被正文引用的图在 6verity 标 orphan，不得进入交付包。数据图只走 `matplotlib + mpl_paper_style`；概念图只走 TikZ/mermaid（见 4drawio）。**作图脚本禁止硬编码论文结果数字（2026-08 补丁）**：所有结果值必须从 `results/*.json` 读取；改模型重跑后，grep `code/` 里被替换的旧数值并删除硬编码，再重跑作图脚本——历史教训：make_figures 里残留 `16.6/17.4/20.0` 旧时点硬编码，虽被后面覆盖，但盲评扫到即判图与结果不同步。
+**Figure Contract（作图前定论证逻辑，禁止先画后编理由）**：每张正式图在放入论文前必须先写一句"本图要证明什么结论"（写入 `figures/figure_manifest.json` 的 story.main_message 字段），再选图型；成图后登记 `{id, kind: data|concept, source, renderer, paper_refs, panels, caption}`。未被正文引用的图在 6verity 标 orphan，不得进入交付包。数据图只走 `matplotlib + mpl_paper_style (+ FigureBuilder)`；概念图只走 TikZ/mermaid（见 4drawio）。**作图脚本禁止硬编码论文结果数字（2026-08 补丁）**：所有结果值必须从 `results/*.json` 读取；改模型重跑后，grep `code/` 里被替换的旧数值并删除硬编码，再重跑作图脚本——历史教训：make_figures 里残留 `16.6/17.4/20.0` 旧时点硬编码，虽被后面覆盖，但盲评扫到即判图与结果不同步。
+
+**v4 caption 同源（任务书 23 条）**：论文 caption **必须**从 `figures/figure_manifest.json` 的 `caption` 字段复制（panel 描述也来自 manifest.panels），禁止"图由代码定义 panel、caption 再由模型手写一次"——figure_story 门会比对正文 caption 与 manifest caption，不一致 FAIL。修改图时先改 manifest 的 caption 再同步论文。**v4 依赖失效（任务书 24 条）**：正文各节（摘要/方法/结果/小结/优缺点/灵敏度/结论）在其文件头部声明 `% v4-depends-on: Q2.model@rev<N>`（N = FINAL_MODEL_SPEC.contract_rev）；methodology 门发现论文声明 rev < 当前契约 rev → FAIL，此时必须重写该节为契约新口径（模型缺点等旧方法表述一律失效，禁止保留）。
 
 ### 步骤 3b：强调与易读性规范（官方展示论文实证，强制）
 

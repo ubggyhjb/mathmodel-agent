@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_tests.py — v2 门禁回归测试。
+"""run_tests.py — v4 门禁回归测试（fixture + 负向 regression）。
 
-覆盖历史事故与 v2 新增门（每个用例独立临时副本，跑完清理）：
-  T01 trace  LaTeX 基线回归（真实项目 模型四\新稿，--strict 必须 PASS）
-  T02 trace  Typst 引擎 fixture（tests/tmp_trace，--strict 必须 PASS）
-  T03 trace  engine=word -> 明确 FAIL（退出 1）
-  T04 layout_gate LaTeX 基线（新稿 --strict，允许 WARN，必须无 FAIL）
-  T05 layout_gate engine=unknown + --strict -> FAIL
-  T06 layout_gate 图源缺失 -> FAIL（改坏 A_code/章节副本）
-  T07 style_audit 新稿基线 --strict -> PASS（允许 WARN）
-  T08 style_audit 附录缺一源文件 -> FAIL（内容哈希门）
-  T09 style_audit AI 声明改错定句 -> FAIL
-  T10 check_decision_log freshness 过期 -> FAIL
-  T11 verify_refs 编造文献 -> strict FAIL（离线时标 SKIP）
-  T12 run_all_gates 新稿聚合（网络可用时跑，离线时 SKIP refs 门）
-  T13 whitespace_qa 合成 PDF 大空带页 → strict FAIL（行带+空带口径，非纵向跨度）
+覆盖历史事故与 v4 新增门（每个用例独立临时副本，跑完清理）：
+  T01-T13   v2/v3 基线回归（trace/layout/style/decision/refs/聚合/whitespace）
+  T14-T19   v3 三门 fixture（methodology/leakage/figure_story）
+  T20-T31   v4 负向 regression（任务书 30 条：12 类已知缺陷必须稳定 FAIL）：
+    T20 同一 outcome 跨问题观测机制不一致（Q2 区间删失 vs Q3 精确+右删失）-> FAIL
+    T21 图 annotation value_key 无来源（旧数值残留）-> FAIL
+    T22 多 panel 图 B panel 无 artist -> FAIL
+    T23 文本/表格物理越界（layout_audit 合入后）-> FAIL
+    T24 正文 `图 ??` -> FAIL；T25 关键词无分隔符 -> FAIL
+    T26 panel 与 caption 不一致 -> FAIL
+    T27 冗余图同处正文且无 keep_both_reason -> FAIL
+    T28 verifier 必须只读（run_all_gates 不得写 decision_log）
+    T29 单位未换算（raw==value 但 registry 声明 *100）-> FAIL
+    T30 模型契约 contract_rev 过期（论文仍按旧 rev）-> FAIL
+    T31 text_integrity 干净项目 -> PASS
 
 用法：python run_tests.py [--workspace <真实项目>] [--skip-online]
 """
@@ -23,11 +24,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 # 真实项目基线（T01/T04/T06-T09/T12）需要一份已通过的竞赛项目；
@@ -276,6 +279,223 @@ def main():
                               run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
     finally:
         td.cleanup()
+
+    # ============ v4 regression 矩阵（任务书三十条：每个已知缺陷稳定 FAIL） ============
+
+    def json_write(path, obj):
+        import json as _j
+        (Path(path)).write_text(_j.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # T20 同 outcome 跨问题机制不一致（Q2 区间删失 vs Q3 精确+右删失）-> methodology FAIL
+    td, tws = method_copy()
+    try:
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        q2 = dict(spec["problems"][0])
+        q2["problem_id"] = "Q2"
+        q2["primary_model"] = "weibull_aft"
+        q2["likelihood"] = "exact"
+        q2["likelihood_evidence"] = ["精确事件"]
+        q2["observation_mechanism"] = {"left_censoring": False, "interval_censoring": False,
+                                       "right_censoring": True}
+        q2["paper_section"] = "main.tex"
+        q2["mechanism_change_rationale"] = ""
+        spec["problems"].append(q2)
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        results.append(report("T20", "同 outcome 机制不一致 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T21 图标注 value_key 无来源（旧结果数字残留在图）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "make_figures.py", "generator_sha256": "x",
+                    "source_results": [{"file": "results/p2_ic.json", "sha256": "y",
+                                        "keys": ["G2.recommended.low"]}],
+                    "annotations": [{"label": "G2 推荐", "value_key": "G2.recommended.low", "value": "16.3"}],
+                    "panels": {}})
+        results.append(report("T21", "annotation-key 无来源 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T22 空 panel B（artist 计数 0 < min_artist_count）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "make_figures.py", "generator_sha256": "x",
+                    "source_results": [], "annotations": [],
+                    "panels": {"A": {"line_count": 2, "patch_count": 1},
+                               "B": {"line_count": 0, "scatter_count": 0, "patch_count": 0}}})
+        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["panels"] = [{"id": "B", "expected_marks": ["line:x", "line:y"],
+                                  "min_artist_count": 3}]
+        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        results.append(report("T22", "空白 panel FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T23 物理越界（文本超出右边界 >15pt）-> layout_gate FAIL（physical 已合入）
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text("% 简单入口\n\\section{方法}\n", encoding="utf-8")
+        (tws / "figures").mkdir()
+        (tws / "project.manifest.json").write_text(
+            '{"schema_version":1,"engine":"latex","entry":"paper/main.tex","hil_policy":"disabled"}',
+            encoding="utf-8")
+        import fitz
+        doc = fitz.open()
+        page = doc.new_page(width=595.27, height=841.89)
+        page.insert_text((600, 400), "overflow text beyond right margin")  # x0=600 远超 524pt
+        doc.save(str(tws / "paper" / "main.pdf"))
+        doc.close()
+        results.append(report("T23", "物理越界（表裁切类）FAIL", False,
+                              run([SCRIPTS / "layout_gate.py", "--workspace", tws, "--strict"])))
+
+    # T24 正文 `图 ??` -> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "结果见图 ??，且表 ?? 亦有引用。\n", encoding="utf-8")
+        results.append(report("T24", "图 ?? 占位 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T25 中文关键词无分隔符 -> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "\\abstractcn{摘要}{NIPT 个体增长曲线 生存分析 风险最小化 代价敏感分类 非整倍体判定}\n",
+            encoding="utf-8")
+        results.append(report("T25", "关键词无分隔 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T26 caption 与 manifest 不一致 -> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "paper" / "main.tex").write_text(
+            "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{panel 为 M2/M3 的描述}"
+            "\\label{fig:q1}\\end{figure}\n", encoding="utf-8")
+        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["caption"] = "panel 为 M1/M2 的描述"
+        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        results.append(report("T26", "caption mismatch FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T27 冗余图同处正文且无 keep_both_reason -> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "figures" / "fig_q2.pdf").write_bytes((tws / "figures" / "fig_q1.pdf").read_bytes())
+        (tws / "paper" / "main.tex").write_text(
+            "\\begin{figure}\\includegraphics{figures/fig_q1}\\caption{PR 曲线 A}\\label{fig:q1}\\end{figure}\n"
+            "\\begin{figure}\\includegraphics{figures/fig_q2}\\caption{PR 曲线 B}\\label{fig:q2}\\end{figure}\n",
+            encoding="utf-8")
+        manifest = json.loads((tws / "reports" / "figure_story_manifest.json").read_text(encoding="utf-8"))
+        manifest = [
+            {"id": "fig_q1", "main_message": "PR 曲线", "visual_priority": "primary",
+             "files": ["figures/fig_q1.pdf"], "redundant_with": ["fig_q2"], "unique_information": "x",
+             "keep_both_reason": ""},
+            {"id": "fig_q2", "main_message": "PR 曲线（重复）", "visual_priority": "primary",
+             "files": ["figures/fig_q2.pdf"], "redundant_with": ["fig_q1"], "unique_information": "x",
+             "keep_both_reason": ""},
+        ]
+        json_write(tws / "reports" / "figure_story_manifest.json", manifest)
+        results.append(report("T27", "冗余图同正文 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T28 verifier 不得修改 decision_log（静态保障：run_all_gates 源码无写入）
+    src = (SCRIPTS / "run_all_gates.py").read_text(encoding="utf-8")
+    violates = bool(re.search(r"dl\[\s*[\"']last_updated", src)) or "save_json(dl_path" in src
+    results.append(report("T28", "verifier 只读保障", True,
+                          SimpleNamespace(returncode=0 if not violates else 1, stdout="", stderr=""),
+                          "T28-verifier-只读"))
+
+    # T29 单位未换算（raw==value 但 registry 声明 *100）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "reports" / "variables.json").write_text(
+            json.dumps({"Y_fraction": {"storage_unit": "fraction", "storage_range": [0, 1],
+                                       "display": {"percent": {"transform": "*100", "unit": "%",
+                                                                "threshold_raw": 0.04,
+                                                                "threshold_display": 4.0}}}},
+                       ensure_ascii=False), encoding="utf-8")
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [], "annotations": [{"label": "阈值", "value_key": "T",
+                                                           "raw": 0.04, "value": 0.04}],
+                    "axes": [{"ylabel": "Y浓度 (%)", "variable": "Y_fraction", "display": "percent"}],
+                    "panels": {}})
+        results.append(report("T29", "单位未换算 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T30 契约 rev 过期（论文声明的 rev 落后于契约）-> methodology FAIL
+    td, tws = method_copy()
+    try:
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        spec["contract_rev"] = 3
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        (tws / "paper" / "main.tex").write_text(
+            "本问按 FINAL_MODEL_SPEC rev=1 建模（旧口径）。\n"
+            "删失结构为区间删失，候选模型采用 Turnbull 与 interval-censored Weibull。\n",
+            encoding="utf-8")
+        results.append(report("T30", "契约 rev 过期 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T31 text_integrity good fixture PASS（关键词分隔 + 无占位符）
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "\\abstractcn{摘要正文}{NIPT；区间删失；检测时点优化；代价敏感分类}\n", encoding="utf-8")
+        results.append(report("T31", "text_integrity 干净 PASS", True,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T32 trace 内置白名单必须带上下文（任务书 28 条）：
+    #   a) 论文出现裸 20（无 ±20%/20% 上下文）且 results 无 20 -> FAIL（UNTRACED）
+    #   b) 论文出现 ±20% 且 results 无真值 -> ALLOWED -> PASS
+    for case_i, (txt, expect_pass) in enumerate([
+        ("扰动幅度不超过 20 时结论不变。\n", False),
+        ("扰动幅度不超过 ±20% 时结论不变。\n", True),
+    ]):
+        with tempfile.TemporaryDirectory() as td:
+            tws = Path(td)
+            (tws / "paper").mkdir(parents=True)
+            (tws / "results").mkdir()
+            (tws / "paper" / "main.tex").write_text(txt, encoding="utf-8")
+            (tws / "project.manifest.json").write_text(
+                '{"schema_version":1,"engine":"latex","entry":"paper/main.tex","hil_policy":"disabled"}',
+                encoding="utf-8")
+            results.append(report(f"T32.{case_i}", f"trace 白名单上下文 [{ '允许' if expect_pass else '拦截' }]",
+                                  expect_pass,
+                                  run([SCRIPTS / "trace_numbers.py", "--workspace", tws, "--strict"])))
+
+    # T33 核心方法无 citation（任务书 25 条）：method_citation_map 指向不存在的 ref -> FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "reports").mkdir()
+        (tws / "paper" / "main.tex").write_text("\\section{方法}\n用了 Turnbull 估计。\n", encoding="utf-8")
+        (tws / "paper" / "references.tex").write_text(
+            "\\begin{thebibliography}{9}\n\\end{thebibliography}\n", encoding="utf-8")
+        (tws / "reports" / "method_citation_map.json").write_text(
+            json.dumps({"Turnbull estimator": ["ref_turnbull"]}, ensure_ascii=False), encoding="utf-8")
+        results.append(report("T33", "核心方法无文献 FAIL", False,
+                              run([SCRIPTS / "verify_refs.py", "--workspace", tws, "--strict"])))
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

@@ -1,0 +1,99 @@
+# MathModel Agent v4 工作流单一事实源（Single Source of Truth）
+#
+# 本文件定义阶段顺序/每个阶段的 skill/id/输入输出。以下组件全部以本文件为准，
+# 任何地方都不得再手写一份阶段顺序：
+#   - skills/1start-mathmodel/SKILL.md   -> 读取本文件生成 plan.md / todo.md
+#   - agent.cordis.yml                  -> 工作流段必须与本文件一致（workflow_spec.py --check 校验）
+#   - README.md / docs/WORKFLOW_v4.md    -> 阶段表由本文件生成
+#   - skills/6verity/scripts/check_decision_log.py -> stages 列表由本文件加载
+#   - skills/6verity/scripts/run_all_gates.py      -> 校验 decision_log 执行历史与本文件一致
+#
+# 修改流程：改本文件 -> 跑 `python <6verity>/scripts/workflow_spec.py --check --root <repo>`
+# 验证所有引用方一致 -> 提交。
+
+version: 4
+workflow_id: "mathmodel-v4"
+
+stages:
+  - id: brainstorm
+    skill: brainstorm-mathmodel
+    inputs: []
+    outputs: ["reports/BRAINSTORM_REPORT.md"]
+    gate: ""
+    purpose: "读题后发散 ≥3 条候选路线，评估可行性/区分度/风险，收敛主选+备选"
+  - id: analysis
+    skill: 2analysis-modeling
+    inputs: ["reports/BRAINSTORM_REPORT.md"]
+    outputs: ["reports/ANALYSIS_MODELING_REPORT.md"]
+    gate: ""
+    purpose: "解析题意、识别变量/约束/数据/评价指标；众数解清单 + 差异化审查"
+  - id: methodology_review
+    skill: 7methodology-review
+    inputs: ["reports/ANALYSIS_MODELING_REPORT.md"]
+    outputs:
+      - "reports/methodology/*.json"
+      - "reports/FINAL_MODEL_SPEC.json"
+      - "reports/figure_story_manifest.json"
+    gate: methodology
+    purpose: "DGP/假设/删失/退化/必要性/泄露/样本量审计；产出可执行模型契约 FINAL_MODEL_SPEC.json"
+  - id: coding_visual
+    skill: 3coding-visual
+    inputs: ["reports/FINAL_MODEL_SPEC.json"]
+    outputs:
+      - "code/*.py"
+      - "results/*.json"
+      - "figures/*.pdf"
+      - "figures/*.meta.json"
+    gate: leakage
+    purpose: "只实现 FINAL_MODEL_SPEC.json 声明的模型；结果 JSON 写 model_spec_sha256；图写 meta.json"
+  - id: schematic
+    skill: 4drawio
+    inputs: ["reports/FINAL_MODEL_SPEC.json"]
+    outputs: ["figures/*.tex|*.mmd|*.drawio"]
+    gate: ""
+    purpose: "仅当存在无法用正文/数据图表达的结构关系才画概念图（concept figure ≤1）"
+  - id: writing
+    skill: 5writing
+    inputs:
+      - "reports/FINAL_MODEL_SPEC.json"
+      - "results/*.json"
+      - "figures/*.meta.json"
+      - "paper/generated_values.tex"
+    outputs: ["paper/main.tex|main.typ", "paper/sections/*"]
+    gate: figure_story
+    purpose: "数值用 generated_values.tex 命令；caption 由 figure manifest 生成；模型缺点随契约失效"
+  - id: verification
+    skill: 6verity
+    inputs: ["paper/main.tex|main.typ", "reports/gates/gates_report.json"]
+    outputs: ["reports/VERIFY_REPORT.md", "reports/gates/*.json"]
+    gate: run_all_gates
+    purpose: "九门+物理完整性门聚合；终审三席 + 答辩销号；不可修改被验对象"
+
+gates_pipeline:
+  # run_all_gates.py 的执行顺序（也是 README/文档中的门禁清单事实源）
+  - manifest
+  - layout
+  - text_integrity
+  - trace
+  - style
+  - decision
+  - refs
+  - methodology
+  - leakage
+  - figure_story
+
+final_review:
+  personas:
+    - id: A
+      name: 数学建模专家
+      scope: 问题抽象/优化模型/模型必要性/结论匹配度
+    - id: B
+      name: 统计与机器学习审稿人
+      scope: independence/repeated measures/censoring/leakage/bias/threshold selection/CI/overfitting
+    - id: C
+      name: 科学编辑与视觉审稿人
+      scope: 摘要/图/表/标粗/视觉层级/30秒可理解
+  veto:
+    - "Reviewer B critical: leakage / wrong likelihood / invalid censoring / invalid test protocol"
+    - "Reviewer C submission blocker: figure blank / table clipped / unresolved reference"
+  pass_rule: "总分 ≥70 且核心维度（建模求解、结果检验）≥该维满分50%，其余维度≥40%"

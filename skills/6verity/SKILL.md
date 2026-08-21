@@ -53,16 +53,16 @@ python <6verity skill>/scripts/project_manifest.py --workspace . --check    # �
 
 ```bash
 python <6verity skill>/scripts/run_all_gates.py --workspace . --strict
-# -> reports/gates/gates_report.json（9 门：manifest/layout/trace/style/decision/refs/methodology/leakage/figure_story）
+# -> reports/gates/gates_report.json（10 门：manifest/layout/text_integrity/trace/style/decision/refs/methodology/leakage/figure_story）
 # 总体 PASS 硬条件：每门退出码 0 且确实执行、输入非空（layout 未执行 adapter / trace 数字为 0 = FAIL）
 ```
 
 所有阈值单一事实源 = `<6verity skill>/style_policy.json`（摘要加粗率 5–15%、正文 0.5–8% 带、图有效字号 5/6pt、DPI 300、近空页 60 字符、底部空白 55% 等）。SKILL 文本与 persona 只引用该文件，禁止各自复制数字。
 
 
-### Step 0.5: v3 方法学输入（由 7methodology-review 生成，强制）
+### Step 0.5: v4 方法学输入（由 7methodology-review 生成，强制）
 
-`7methodology-review`（`2analysis-modeling` 之后、`3coding-visual` 之前的独立强制阶段，v3 新增）已把"模型定义是否成立"审计登记为 `reports/` 下的一组方法学输入。本阶段直接复用；**缺失即代表方法学未审计**，`--strict` 下 v3 三门禁直接 FAIL：
+`7methodology-review`（`2analysis-modeling` 之后、`3coding-visual` 之前的独立强制阶段，v3 新增；v4 起须产出模型契约）已把"模型定义是否成立"审计登记为 `reports/` 下的一组方法学输入。本阶段直接复用；**缺失即代表方法学未审计**，`--strict` 下 v4 各门直接 FAIL：
 
 | 文件 | 用途 | 消费它的门禁 |
 | --- | --- | --- |
@@ -73,16 +73,20 @@ python <6verity skill>/scripts/run_all_gates.py --workspace . --strict
 | `reports/methodology/model_necessity.json` | 模型必要性分类（Primary/Baseline/Robustness/Rejected） | methodology |
 | `reports/methodology/ml_operation_scope.json` | ML 操作允许数据范围（training_fold / inner_cv / outer_test） | leakage |
 | `reports/methodology/sample_sizes.json` | 分组样本量与不确定性（有效 n / CI 宽度 / exploratory） | methodology |
-| `reports/figure_story_manifest.json` | 每张主图的 Figure Story（main_message/panels/unique_information/visual_priority） | figure_story |
+| `reports/FINAL_MODEL_SPEC.json` | **v4 可执行模型契约**（逐问题 outcome/机制/likelihood/result_keys/paper_section；results 须带 model_spec_sha256） | methodology（per-problem） |
+| `reports/methodology/attack_questions.json` | v4 答辩销号记录（severity/status/answer/evidence；P0/P1 open>0 FAIL） | attack resolution |
+| `figures/figure_manifest.json` | v4 Figure 唯一清单（story/source/panels/caption/supersedes） | figure_story |
 
-**聚合入口不变**：`run_all_gates.py` 现共 **9 门**（原六门 `manifest/layout/trace/style/decision/refs` + 新增 `methodology/leakage/figure_story`），一条命令聚合：
+**v4 聚合入口**：`run_all_gates.py` 现共 **10 门**（manifest/layout/text_integrity/trace/style/decision/refs/methodology/leakage/figure_story），一条命令聚合：
 
 ```bash
 python <6verity skill>/scripts/run_all_gates.py --workspace . --strict
-# -> reports/gates/gates_report.json（9 门）
+# -> reports/gates/gates_report.json（10 门 + workflow_order 校验）
 ```
 
-methodology / leakage / figure_story 三门**复用**上述输入做程序化复检，并补齐论文侧的交叉验证（"相互独立"修饰词、Rejected 模型残留正文、弱证据强结论词、主图 main_message 非空、图登记覆盖）。三门的输入 schema、触发词与阈值细则见本文件 Step 9–11 与 `7methodology-review` SKILL。
+**验证器只读（v4 强制）**：run_all_gates 及其任何子门**绝不修改被验对象**（不刷 decision_log 时间戳、不改 results/figures/paper）；freshness 若 FAIL，正确动作是写者更新 decision_log 后重跑，禁止绕过。
+
+门禁程序化复检并补齐论文侧交叉验证（"相互独立"修饰词、Rejected 模型残留正文、弱证据强结论词、契约逐问证据词、图登记覆盖、空 panel、caption 一致性、supersedes、annotation-key、占位符/悬空引用、关键词分隔、物理越界）。
 
 
 ### Step 1: 运行文本质量门禁
@@ -259,16 +263,15 @@ xelatex 需跑两遍解决目录和交叉引用。
 python <6verity skill>/scripts/layout_gate.py --workspace . --strict
 # 引擎无关共享 PDF 检查（入口/页面尺寸/底部空白/近空页/被引图源有效字号 <5pt FAIL、5-6pt WARN）
 # + LaTeX/Typst 源适配器（include/image 引用存在、图源/论文新鲜度、caption）
-# → reports/gates/layout_gate.json（含 supported/executed/coverage）
+# + v4 物理越界审计（layout_audit 已合入本门：越界>15pt FAIL、8-15pt WARN、行重叠、图片越界、
+#   按模板 geometry 解析边距；原独立脚本 layout_audit.py 保留为单独运行入口，聚合门以内嵌为准）
+# → reports/gates/layout_gate.json（含 supported/executed/coverage/physical_audit）
 # word/unknown 引擎无适配器：--strict 下直接 FAIL，不判伪 PASS
-python <6verity skill>/scripts/layout_audit.py --workspace . --strict
-# 越界>15pt FAIL、8-15pt WARN、行重叠、近空页、异常行高（边距按模板 geometry 解析）
 ```
 
-- layout_gate FAIL（include/image 引用缺失、重复 include、被引图源有效字号 <5pt、main.pdf 早于源文件或被引图源、未知引擎未适配）→ 修复后重编译重跑。
-- layout_audit FAIL（越界 >15pt、页面尺寸异常、图片越界）→ 修复后重编译重跑；多为行内不可断 token 硬越界，用 `\emergencystretch=2em`（模板已内置）或 `\allowbreak` 处理。
+- layout_gate FAIL（include/image 引用缺失、重复 include、被引图源有效字号 <5pt、main.pdf 早于源文件或被引图源、未知引擎未适配、**physical 越界 >15pt / 页面尺寸异常 / 图片越界**）→ 修复后重编译重跑；越界多为行内不可断 token 硬越界，用 `\emergencystretch=2em`（模板已内置）或 `\allowbreak` 处理，宽表用 `\resizebox{\textwidth}{!}{...}`。
 - WARN（小越界 8–15pt、行重叠、近空页、底部大面积空白、page_fill 偏空/偏满、图源有效字号 5-6pt）→ 行重叠多是公式字体提取假阳性，渲染对应页视觉复核即可；近空页/底部空白/page_fill 偏空按“先放大核心图 10–20%、禁止塞字/缩行距”处置（见 5writing 留白纪律）；字号 WARN 应尽量修复（并排图改单列、重绘源图）。page_fill 与 `scripts/whitespace_qa.py` 一律用**行带占用率+最大连续空带**口径（12pt 条带，空带 >25% 内容高即偏空），禁用“内容纵向跨度”判留白（见 whitespace_qa.py 头部说明）。
-- **paper-layout-qa 的 check_layout.py（2026-08 已并入五项：标点禁则/表格居中/边距对称/空白页/字体嵌入，硬版心 510pt，跳过宽表页防误报）**：改完 tex/图并双遍编译后，必须跑 `python <paper-layout-qa>/tools/check_layout.py <main.pdf>` 且 **HIGH 清零**（日志层 Overfull>15pt 与 Missing character 必须清零；修法见 5writing“排版细节纪律”），再宣布 6verity PASS。它与 layout_gate/layout_audit 互补：前者管“集中式质检”，九门（run_all_gates）管“门禁基建/规范/追溯/方法学”。
+- **paper-layout-qa 的 check_layout.py（2026-08 已并入五项：标点禁则/表格居中/边距对称/空白页/字体嵌入，硬版心 510pt，跳过宽表页防误报）**：改完 tex/图并双遍编译后，必须跑 `python <paper-layout-qa>/tools/check_layout.py <main.pdf>` 且 **HIGH 清零**（日志层 Overfull>15pt 与 Missing character 必须清零；修法见 5writing“排版细节纪律”），再宣布 6verity PASS。它与 layout_gate/layout_audit 互补：前者管“集中式质检”，十门（run_all_gates）管“门禁基建/规范/追溯/方法学”。
 
 然后做视觉检查：
 
@@ -337,7 +340,7 @@ python <6verity skill>/scripts/visual_tools.py render --pdf "$OUTPUT_PDF" --out-
 - **决策日志完整性**：`python <6verity skill>/scripts/check_decision_log.py --workspace .` 必须 PASS——核心 6 阶段齐全（新项目含可选的头脑风暴 brainstorm-mathmodel 阶段则 7 阶段齐全）、完成状态成前缀、每个已完成阶段有决策记录、open_issues 全部 closed、**freshness（last_updated 晚于全部产物）与阶段产物绑定（done 阶段的关键产物存在）**。FAIL 说明流程状态机坏了，先修日志再谈提交。
 - **竞赛规则与 AI 披露合规（2026 试行）**：按 `references` 知识库"竞赛规则与 AI 使用披露"小节自查——论文参考文献前必须有"AI 工具使用声明"且用官方定句（未使用："本参赛队在竞赛过程中未使用任何 AI 工具。"；使用："本参赛队在竞赛过程中使用了 AI 工具，主要用于【简要用途】，详细使用情况见支撑材料。"）；使用 AI 的必须按 `ai_use_report_template.md` 生成详情并以官方文件名 **"AI 工具使用详情.pdf" 放入支撑材料 ZIP**（内容 4 项：工具名称/版本或型号、使用目的和环节、提示方式与过程说明、采纳修改核验情况（语言润色除外））；AI 只能用于执行类环节，核心建模与分析必须参赛队主导、AI 内容逐项核验；参考文献必须真实可核实；严禁虚构或篡改数据（由 verify_all.py + trace_numbers.py 程序兜底）。
 - **2026 格式规范 checklist**（逐项核对论文 PDF，任何一项不满足 = FAIL）：① 无目录页；② 标题+摘要+关键词同页且摘要 ≤1 页，该页页码"1"页脚居中；③ 正文 ≤30 页（附录不计）；④ 电子版为单一 PDF ≤20MB 且第一页 = 摘要页（无承诺书/编号页）；⑤ 附录含"支撑材料文件列表"且与提交的支撑材料 ZIP（≤20MB）一一对应（ZIP 须含全部源码、自主查阅的数据资料、AI 工具使用详情.pdf）；⑥ 附录源码**全部完整**（非"核心代码摘录"）且可运行、与正文算法一致——程序化兜底见下方"图表排版强调门"的检查项 12（code/ 下每个源文件都必须被 lstinputlisting/verbatiminput 全文引入，缺一 FAIL）；⑦ 匿名扫描（无学校/姓名/赛区）；⑧ 参考文献格式规范；⑨ 纸质版打印提示：承诺书第 1 页、编号专用页第 2 页（官方模板，队伍自填）、左侧装订，内容与电子版一致。
-- **图表排版强调门（程序化）**：跑 `python <6verity skill>/scripts/style_audit.py --workspace . --strict` 必须 PASS——摘要页完整且页码"1"、无目录、**摘要内容性加粗率真实计算（5–15% 硬带，style_policy.json）**且以结论短语为主（裸数字加粗占比 >50% 即 FAIL）、正文加粗密度 0.5-8% 带、嵌图 DPI≥300、图注在图下方、表格全部三线表、正文 ≤30 页、AI 声明在参考文献前且**官方定句逐字匹配**、附录含支撑材料文件列表、**附录源码全文按内容 sha256 与 code/ 逐一比对（命令存在性不算数）**。任何 FAIL 必须修复后重跑；WARN 逐条给处置说明（修复或声明接受）。此门与 layout_gate/layout_audit 互补：style_audit 管"规范"，layout_gate 管"引用/字号/新鲜度"，layout_audit 管"物理排版"。
+- **图表排版强调门（程序化）**：跑 `python <6verity skill>/scripts/style_audit.py --workspace . --strict` 必须 PASS——摘要页完整且页码"1"、无目录、**摘要内容性加粗率真实计算（5–15% 推荐带，v4 偏离→WARN；0 加粗或裸数字加粗占比 >50% 仍 FAIL）**、正文加粗密度 0.5-8% 带、嵌图 DPI≥300、图注在图下方、表格默认三线表（v4：非官方硬规则，偏离→WARN 由 contest_profile 放行）、正文 ≤30 页、AI 声明在参考文献前且**官方定句逐字匹配**、附录含支撑材料文件列表、**附录源码全文按内容 sha256 与 code/ 逐一比对（命令存在性不算数）**。任何 FAIL 必须修复后重跑；WARN 逐条给处置说明（修复或声明接受）。此门与 layout_gate（含物理越界合并）互补：style_audit 管"规范"，layout_gate 管"引用/字号/新鲜度/越界"。推荐带规则（摘要字数/加粗率、三线表）一律不因偏离而 FAIL（任务书 21/22 条）。
 - **2026-08 补丁的三项新增检查（style_audit 检查项 12/13/14，全部纳入 FAIL 口径）**：⑫ 附录源码全文（见上⑥的程序化版本——历史教训：附录只放 4 段"核心摘录"被认定违规，旧门只查"含支撑材料列表"查不出）；⑬ **交付物新鲜度**——main.pdf 必须晚于全部 .tex 与 figures/*.pdf，否则判定"门禁结果不代表最终版"直接 FAIL（历史教训：改完 tex/图/结果后没重编译没重跑门，交付物与"全 PASS"报告对不上；results/*.json 晚于图 → WARN 提醒重生成图）；⑭ **正文裸数字加粗**——摘要页之外的正文/表格里逐个加粗数字（如表格中 `\textbf{15.88}`）按行级判定为违规（短语加粗如"仅到达 27 个端点"不误报）。
 - **最后一版必须重跑全部程序门禁（2026-08 补丁，硬性纪律）**：验收报告里的每个 PASS 必须对应"此刻磁盘上的最终版"。任何 tex/图/代码/结果文件在跑完门禁之后又被修改，必须重新编译 + 全部门禁重跑（style_audit 的新鲜度检查会直接 FAIL 提醒）；禁止把旧结果写进 VERIFY_REPORT 冒充最终版验收。历史教训：优化会话在 23:52–23:58 改了 tex 和图，最后一版编译后零门禁复跑，交付物（图重叠、55pt 越界、附录违规、裸数字加粗）全部存在于"全 PASS"报告里。
 - **提交包核验（交付物清单+一致性）**：竞赛提交文件（按附件模板填写的 result*.xlsx 等）必须与 results/ 权威 JSON/xlsx 同源一致：逐个打开提交文件核对行数（表头+数据行）、非空值个数、关键数值与 results/*.json 一致；提交目录中不得残留空模板或错拷贝。任何不一致 = FAIL。历史教训：提交目录里躺着"同一文件的错拷贝 + 9 行空模板"，论文与提交文件两套数据，直接掉档。
@@ -352,18 +355,28 @@ python <6verity skill>/scripts/visual_tools.py render --pdf "$OUTPUT_PDF" --out-
 
 **与 Step 8b 的关系**：Step 8b 规定"派 3 席、8 维固定打分表、总分 ≥70、核心维度 ≥50%、其余 ≥40%、55–69 定向修改复评、<55 结构性返工、最多 3 轮、问题清单强制闭环"的机制；本节只把 3 席**身份**从"通审 / 正确性与可复现 / 创新与决策效用"调整为 A/B/C 三类专家（评分维度、阈值、轮次上限、盲评逻辑、scores 落盘、分席判定全部沿用 8b 不变）。三席独立评分，禁止互相引用结论、禁止主代理向席位泄露其他席分数；有条件时仍用 workflow 的 provider/model 覆盖实现"评者 ≠ 写者"。
 
-### Step 10: 攻击式问题答辩（v3）
+**v4 致命否决权（任务书 32 条）**：三席分数只是必要条件；以下任一 **Critical / Submission blocker** 标记 → **总分再高也 FAIL**（veto 优先于平均分）：
+- Reviewer B Critical：leakage / wrong likelihood / invalid censoring / invalid test protocol 任一。
+- Reviewer C Submission blocker：figure blank / table clipped / unresolved reference（含 `图 ??`、undefined ref）任一。
+每席输出中必须显式列出"Critical/Blocker 检查项"清单（无则写"无"），主代理逐个核对，任何触发即进入修复轮回（不因 85+85+60 平均 76.7 放行）。
+
+### Step 10: 攻击式问题答辩与销号（v4 答辩门）
 
 **提交自动运行**攻击式评委问题生成器，生成 ≥10 个最难回答的问题：
 
 ```bash
 python <6verity skill>/scripts/attack_questions.py --workspace . --min 10
-# -> reports/methodology/attack_questions.md + attack_questions.json
+# -> reports/methodology/attack_questions.md + attack_questions.json（每条带 severity/status/answer/evidence）
 ```
 
-- 每个问题**必须在正文或附录可回答**；任何问题无法回答 → 记 open issue（写入 decision_log.open_issues + todo.md），**不得宣布 final PASS**，销号后才能放行。
-- `methodology` / `leakage` / `figure_story` 三门任何 FAIL 同理：未修完不得宣布 final PASS。
-- 该生成器复用 methodology/leakage/figure_story 门禁报告与 `reports/methodology/*.json` 的事实产出问题草稿；`attack_questions.py` 是生成器（退出码恒为 0，不判 PASS/FAIL），`attack_questions.md` 中的"是否可回答"需人工复核销号。
+- 每条问题**必须在正文或附录回答**：把答复写入 `attack_questions.json` 的 `answer` + `evidence`（指向 paper:6.2 / results:q2_ic.json 等），`status` 置 `answered`。
+- **销号门（v4）**：`python <6verity skill>/scripts/attack_questions.py --workspace . --check --strict` —— **P0/P1 存在 open > 0 → FAIL**；P2 建议级不阻断。任何问题无法回答 → 记 open issue（decision_log.open_issues + todo.md），**不得宣布 final PASS**。
+- 无法回答的问题**不是改 status 混过**：要么修复论文/附录补证据，要么把该问题标 P2 并给出"为何不适用"的 evidence。
+- `methodology` / `leakage` / `figure_story` 等门任何 FAIL 同理：未修完不得宣布 final PASS。
+
+### Step 10b: 独立视觉审稿 Agent（v4，任务书 31 条）
+
+终审增加一次**看图**审阅：把正文 1-30 页渲染成 contact sheet + 每张本轮新增/修改的 Figure 单独高分辨率图，交给上下文隔离的视觉 Reviewer，只回答：裁切 / 空 panel / 字体太小 / 标签重叠 / 坐标范围异常 / 单位异常 / 视觉中心不明确 / 重复图 / 图注与图意不符。程序化门禁抓不到的问题（曲线全贴底部、标签挤成一团）由这一步兜底；**任何本轮新增或修改的 Figure 必须单独目检，不能只抽查旧页面**。
 
 ### Step 11: Paper Simplification Pass（v3）
 

@@ -45,7 +45,19 @@ HIL_POLICY 单一来源 = `project.manifest.json` 的 `hil_policy` 字段（inte
 
 ## 工作流
 
-### 0. 断点恢复（state/decision_log.json + 项目清单）
+### 0. 阶段顺序单一事实源（v4）
+
+工作流阶段顺序唯一来源 = 仓库根目录 `workflow_spec.yaml`（`version: 4`）。本 skill 的
+plan.md / todo.md / 阶段表一律**从该文件生成**，禁止在 plan/todo 里手写阶段顺序。
+
+- 读取方法：`python <6verity skill>/scripts/workflow_spec.py --print`（打印 stage id 列表）；
+  阶段全称（skill 名/输入输出/用途）读 `workflow_spec.yaml` 的 `stages` 段。
+- `<6verity skill>` = skills/6verity 的实际安装目录——本 skill 被复制/移动后先用
+  Get-ChildItem/Test-Path 探测真实位置再拼接，禁止写死绝对路径。
+- 一致性校验：`python <6verity skill>/scripts/workflow_spec.py --check --root <repo>`，
+  若 FAIL，说明某处仍手写了旧顺序，先修它。
+
+### 0.5 断点恢复（state/decision_log.json + 项目清单）
 
 工作流可能被会话断线、上下文压缩或人工暂停打断。决策不能只存在于对话里——`state/decision_log.json` 是唯一的结构化记忆；`project.manifest.json` 是引擎/入口/HIL_POLICY/工件哈希的单一事实源。
 
@@ -69,7 +81,7 @@ HIL_POLICY 单一来源 = `project.manifest.json` 的 `hil_policy` 字段（inte
 
 
 ### 2. 制定方案
-按以下结构编写 `plan.md`：
+按以下结构编写 `plan.md`（阶段表从 workflow_spec.yaml 生成，禁止手写顺序）：
 
 ```markdown
 # 方案
@@ -82,44 +94,46 @@ HIL_POLICY 单一来源 = `project.manifest.json` 的 `hil_policy` 字段（inte
 - 论文语言：<中文 / 英文>
 - 子问题数量：<已知 N 个 / 待分析确定>
 
-workflow:
+workflow（来源 workflow_spec.yaml，运行 workflow_spec.py --print 生成）:
    step      skills
 0. 头脑风暴与候选路线筛选 - `brainstorm-mathmodel`
 1. 赛题分析与建模设计 - `2analysis-modeling`
-2. 编程实现和图表生成 - `3coding-visual`
-3. 流程与架构图绘制 - `4drawio`
-4. 竞赛论文撰写 - `5writing`
-5. 验证和验收 - `6verity`
+2. 方法学审查与模型契约（v4 强制） - `7methodology-review` → reports/FINAL_MODEL_SPEC.json
+3. 编程实现和图表生成 - `3coding-visual`（只实现 FINAL_MODEL_SPEC.json）
+4. 流程与架构图绘制 - `4drawio`
+5. 竞赛论文撰写 - `5writing`
+6. 验证和验收 - `6verity`
 ```
+（以下目录结构见 2.5 节，阶段表来源 workflow_spec.yaml）
 
-## 项目目录结构
+### 2.5 项目目录结构
 
-各阶段按此骨架创建和填充文件：
+v4 各阶段按此骨架创建和填充文件（与 workflow_spec.yaml 的 inputs/outputs 对齐）：
 
 ```text
 .
-├── plan.md                      # 1: 本文件
-├── todo.md                      # 1: 待办事项
+├── plan.md                      # 1: 本文件（阶段表来源 workflow_spec.yaml）
+├── todo.md                      # 1: 待办事项（阶段表来源 workflow_spec.yaml）
 ├── reports/                     # 各阶段文档报告
 │   ├── ANALYSIS_MODELING_REPORT.md  # 1: 赛题分析-建模报告（2analysis-modeling）
 │   ├── BRAINSTORM_REPORT.md          # 0: 头脑风暴-候选路线筛选（brainstorm-mathmodel）
-│   ├── RESULTS_REPORT.md            # 2: 结果报告（3coding-visual）
-│   ├── DRAWIO_REPORT.md             # 3: 非数据图说明（4drawio）
-│   ├── VERIFY_REPORT.md             # 5: 验收报告（6verity）
+│   ├── FINAL_MODEL_SPEC.json         # 2: 可执行模型契约（7methodology-review 强制产出）
+│   ├── methodology/*.json            # 2: 方法学审计 7 份（7methodology-review）
+│   ├── figure_story_manifest.json    # 2: Figure Story 唯一清单（7methodology-review）
+│   ├── RESULTS_REPORT.md            # 3: 结果报告（3coding-visual）
+│   ├── DRAWIO_REPORT.md             # 4: 非数据图说明（4drawio）
+│   └── VERIFY_REPORT.md             # 6: 验收报告（6verity）
 ├── state/                       # 1: 工作流状态（断点恢复）
 │   └── decision_log.json        #     阶段状态 + 关键决策 + 问题闭环（每阶段更新）
-├── code/                        # 2: 代码（3coding-visual）
-│   ├── problem1.py
-│   ├── problem2.py
-│   ├── problem3.py               # 问题的数量应该更具题目动态调整
-│   ├── ... 
-│   └── utils.py
-├── results/                     # 2: 结果记录（3coding-visual）
-├── figures/                     # 2+3: 所有图表（3coding-visual + 4drawio）
+├── code/                        # 3: 代码（3coding-visual）
+├── results/                     # 3: 结果记录（3coding-visual；JSON 含 model_spec_sha256）
+├── figures/                     # 3+4: 所有图表
 │   ├── *.pdf                    #     数据图 + 非数据图 PDF
-│   ├── *.drawio                 #     非数据图源文件
-├── paper/                       # 4: 论文（5writing）
+│   ├── *.meta.json              #     每张正式图的 provenance 元数据（v4 强制）
+│   └── *.drawio / *.tex / *.mmd #     非数据图可编辑源（按 renderer）
+├── paper/                       # 5: 论文（5writing）
 │   ├── main.typ / main.tex      #     论文主文件（按用户选择的引擎）
+│   ├── generated_values.tex     #     由 results/*.json 生成的关键数值命令（v4 强制）
 │   └── sections/                #     各节文件（.typ 或 .tex）
 ```
 
@@ -127,33 +141,35 @@ workflow:
 
 ### 3. 生成待办
 
-将 `todo.md` 写成阶段性 checklist，格式如下：
+将 `todo.md` 写成阶段性 checklist（条目从 workflow_spec.yaml 生成）：
 
 ```markdown
 # 待办事项
 
 - [ ] 0. 头脑风暴与候选路线筛选 - `brainstorm-mathmodel`
 - [ ] 1. 赛题分析与建模设计 - `2analysis-modeling`
-- [ ] 2. 编程实现和图表生成 - `3coding-visual`
-- [ ] 3. 流程与架构图绘制 - `4drawio`
-- [ ] 4. 竞赛论文撰写 - `5writing`
-- [ ] 5. 验证和验收 - `6verity`
+- [ ] 2. 方法学审查与模型契约（v4 强制） - `7methodology-review`
+- [ ] 3. 编程实现和图表生成 - `3coding-visual`
+- [ ] 4. 流程与架构图绘制 - `4drawio`
+- [ ] 5. 竞赛论文撰写 - `5writing`
+- [ ] 6. 验证和验收 - `6verity`
 ```
 
 每完成一个阶段，都要更新 `todo.md` 中对应任务的状态。
 
 ### 4. 依次执行阶段
 
-按以下顺序调用下游 skills：
+按 workflow_spec.yaml 定义的顺序调用下游 skills（阶段表来源 spec，禁止另写）：
 
 | 阶段 | Skill | 作用 | 主要产物 |
 | --- | --- | --- | --- |
 | 头脑风暴 | `brainstorm-mathmodel`（兼容别名 `brainstorming`） | 在读题后发散生成多套候选建模思路，评估可行性、区分度与风险，并收敛出主选/备选路线。 | `reports/BRAINSTORM_REPORT.md` |
 | 赛题分析与建模设计 | `2analysis-modeling` | 解析题意、识别变量/约束/数据/评价指标，并建立数学模型、目标函数、约束条件和求解策略。 | `ANALYSIS_MODELING_REPORT.md` |
-| 编程实现和图表生成 | `3coding-visual` | 实现可复现代码，运行实验，生成结果表和多种多样的图表。 | `code/`, `results/` ,  `RESULTS_REPORT.md`, `figures/图表` |
-| 流程与架构图绘制 | `4drawio` | 在论文确实需要时，绘制方法流程图、架构图和非数据型概念图。 | `figures/*.drawio`, `figures/*.pdf`, `DRAWIO_REPORT.md` |
-| 竞赛论文撰写 | `5writing` | 基于分析、建模、代码结果和图表撰写最终竞赛论文，并按章节直接插入图表。 | `paper/` |
-| 验证和验收 | `6verity` | 检查可复现性、一致性、产物完整性、格式规范和提交就绪状态。 | `VERIFY_REPORT.md` |
+| 方法学审查与模型契约 | `7methodology-review` | 审计 DGP/假设/删失/退化/必要性/泄露/样本量，并产出**可执行模型契约** `reports/FINAL_MODEL_SPEC.json`（v4 强制；后续 coding/writing 只消费该契约）。 | `FINAL_MODEL_SPEC.json`, `methodology/*.json`, `figure_story_manifest.json` |
+| 编程实现和图表生成 | `3coding-visual` | 只实现 FINAL_MODEL_SPEC.json 声明的模型；结果 JSON 写 model_spec_sha256；每张正式图生成 .meta.json。 | `code/`, `results/`, `RESULTS_REPORT.md`, `figures/*.pdf+*.meta.json` |
+| 流程与架构图绘制 | `4drawio` | 仅在存在无法用正文/数据图表达的结构关系时绘制概念图（concept figure ≤1）。 | `figures/*.tex|*.mmd|*.drawio`, `DRAWIO_REPORT.md` |
+| 竞赛论文撰写 | `5writing` | 数值用 paper/generated_values.tex 命令；caption 由 figure manifest 生成；模型契约变更后失效段落重生成。 | `paper/` |
+| 验证和验收 | `6verity` | 九门+text_integrity+物理完整性聚合（只读验证，绝不修改被验对象），终审三席 + 答辩销号。 | `VERIFY_REPORT.md` |
 
 每完成一个阶段，除更新 `todo.md` 外，必须同步更新 `state/decision_log.json`（见"断点恢复协议"）：stages 状态、current_stage、decisions 关键决策（decision+reason）、last_updated。
 

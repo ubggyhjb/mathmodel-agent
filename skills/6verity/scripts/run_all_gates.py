@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_all_gates.py — v3 一键聚合门禁：manifest / layout / trace / style / decision / refs / methodology / leakage / figure_story。
+"""run_all_gates.py — v4 一键聚合门禁：manifest / layout / text_integrity / trace / style / decision / refs / methodology / leakage / figure_story。
 
-九门全部为 Python（Windows 直接运行，sys.executable + 绝对路径调用）：
+十门全部为 Python（Windows 直接运行，sys.executable + 绝对路径调用）：
   project_manifest   --check       清单结构 + 工件哈希一致性
-  layout_gate        --strict      引擎无关排版门（PDF 共享检查 + 源适配器 + 有效字号）
+  layout_gate        --strict      引擎无关排版门（PDF 共享检查 + 源适配器 + 有效字号 + 物理越界合并）
+  text_integrity     --strict      v4 文本完整门（图??/表??/悬空引用/关键词分隔/编译日志）
   trace_numbers      --strict      论文数字 <-> 结果 JSON 双向追溯
   style_audit        --strict      图表/排版/强调规范门（含真实摘要加粗率与附录全文）
-  check_decision_log              决策日志结构/闭环 + freshness + 阶段产物绑定
+  check_decision_log              决策日志结构/闭环 + freshness + 阶段产物绑定（stages 来自 workflow_spec）
   verify_refs        --strict      参考文献 OpenAlex/Crossref 核验
-  methodology        --strict      v3 Methodology Review（DGP/假设/删失/退化/必要性/样本量/结论强度）
-  leakage            --strict      v3 ML Leakage（操作范围登记 + 论文/代码启发式）
-  figure_story       --strict      v3 Figure Story（主图必填 main_message + 覆盖 + 去重）
+  methodology        --strict      v4 Methodology（DGP/假设/删失/退化/必要性/样本量 + FINAL_MODEL_SPEC 逐问题契约）
+  leakage            --strict      v4 ML Leakage（schema 声明 + 运行时 fold provenance）
+  figure_story       --strict      v4 Figure Story（唯一 manifest + panel integrity + annotation-key + supersedes）
+
+聚合器内置 workflow_order 检查：decision_log 执行历史 vs workflow_spec.yaml（来源单一事实源）。
+验证器只读：本脚本不修改任何被验对象（decision_log / results / paper 等一律不写）。
 
 总体 PASS 硬条件（任一不满足 -> FAIL）：
   1. 每道门退出码 0；
@@ -20,7 +24,8 @@
        trace_numbers summary.paper_numbers > 0（输入为空 = FAIL）；
        style_audit  有 JSON 报告且 coverage.pdf 非零页；
        verify_refs  有 JSON 报告；
-       manifest/decision 以退出码为准。
+       manifest/decision 以退出码为准；
+       workflow_order 校验通过。
 
 输出：
   reports/gates/gates_report.json   聚合结果
@@ -39,6 +44,27 @@ import sys
 from pathlib import Path
 
 import gate_common as gc
+import workflow_spec as wfs
+
+
+def check_workflow_order(ws: Path):
+    """聚合器级检查：decision_log 的阶段执行历史必须与 workflow_spec.yaml 一致。
+    结果写入聚合报告 workflow_order 字段；不一致则总体 FAIL。"""
+    spec = wfs.load_spec(wfs.repo_root(Path(__file__).resolve().parent))
+    expected = [str(s.get("skill", "")) for s in spec.get("stages", []) if s.get("skill")]
+    if not expected:
+        return {"ok": False, "message": "workflow_spec.yaml 无 stages（版本或结构异常）"}
+    dl = gc.load_json(ws / "state" / "decision_log.json", None)
+    if not isinstance(dl, dict):
+        return {"ok": True, "message": "decision_log 不存在（由 decision 门处理，跳过顺序校验）"}
+    stages = dl.get("stages") or {}
+    actual = [k for k in stages if k != "1start-mathmodel"]
+    # 允许旧项目缺 brainstorm；不允许缺失 v4 核心阶段或顺序颠倒
+    core = [e for e in expected if e != "brainstorm-mathmodel"]
+    if actual != expected and actual != core:
+        return {"ok": False,
+                "message": f"decision_log 执行历史 {actual} 与 workflow_spec {expected} 不一致（v4 阶段顺序需与 spec 对齐）"}
+    return {"ok": True, "message": f"执行历史与 workflow_spec 一致（{len(actual)} 阶段）"}
 
 
 def gate_specs(ws: Path, strict: bool, skip: set):
@@ -50,6 +76,9 @@ def gate_specs(ws: Path, strict: bool, skip: set):
         ("layout_gate", scripts / "layout_gate.py",
          ["--workspace", str(ws), *strict_args],
          "reports/gates/layout_gate.json"),
+        ("text_integrity", scripts / "text_integrity.py",
+         ["--workspace", str(ws), *strict_args],
+         "reports/gates/text_integrity.json"),
         ("trace_numbers", scripts / "trace_numbers.py",
          ["--workspace", str(ws), *strict_args], "trace_report.json"),
         ("style_audit", scripts / "style_audit.py",
@@ -111,7 +140,7 @@ def semantic_problems(name, result, ws):
     elif name == "verify_refs":
         if doc is None:
             problems.append("verify_refs 未产出 JSON 报告")
-    elif name in ("methodology", "leakage", "figure_story"):
+    elif name in ("methodology", "leakage", "figure_story", "text_integrity"):
         if doc is None:
             problems.append(f"{name} 未产出 JSON 报告")
     return problems
@@ -131,18 +160,9 @@ def main(argv=None):
     report_file = Path(args.report).resolve() if args.report else ws / "reports" / "gates" / "gates_report.json"
     engine = gc.manifest_engine(ws)
 
-    # 聚合门是一次"阶段收口"动作：先把 decision_log.last_updated 刷到当前时刻，
-    # 否则刚重生成 results/figures/paper 后立刻跑本门，freshness 会误判
-    # "决策日志早于产物"（历史教训：重生成图后 decision 门 FAIL，需手工补时间戳）。
-    try:
-        dl_path = ws / "state" / "decision_log.json"
-        dl = gc.load_json(dl_path, None)
-        if isinstance(dl, dict):
-            dl["last_updated"] = gc.iso_now()
-            gc.save_json(dl_path, dl)
-    except Exception as exc:
-        print(f"WARN 刷新 decision_log.last_updated 失败: {exc}", file=sys.stderr)
-
+    # v4：验证器完全只读。禁止在此修改 decision_log / 任何被验对象（writer updates,
+    # verifier verifies）。若 decision 门 freshness 因产物更新而 FAIL，正确动作是
+    # 由写者（当前阶段）更新 decision_log.last_updated，而不是让验证器代劳。
     gates_out = {}
     for name, script, gate_args, report_rel in gate_specs(ws, args.strict, skip):
         if name in skip:
@@ -167,10 +187,14 @@ def main(argv=None):
         "skipped": sum(1 for g in gates_out.values() if g["status"] == "SKIPPED"),
         "overall": "PASS" if gates_out and all(g["status"] == "PASS" for g in gates_out.values()) else "FAIL",
     }
+    wo = check_workflow_order(ws)
+    if not wo["ok"]:
+        summary["overall"] = "FAIL"
+        summary["workflow_order"] = "FAIL"
     agg = {
         "gate": "run_all_gates", "workspace": str(ws), "engine": engine,
         "strict": args.strict, "ran_at": gc.iso_now(), "gates": gates_out,
-        "summary": summary, "report": str(report_file),
+        "workflow_order": wo, "summary": summary, "report": str(report_file),
     }
     try:
         gc.save_json(report_file, agg)
@@ -201,20 +225,10 @@ def main(argv=None):
     except Exception as exc:
         print(f"WARN 写运行记录失败: {exc}", file=sys.stderr)
 
-    # 聚合门是最后一道程序动作：刷新 decision_log.last_updated，保证
-    # 下一次 check_decision_log 的 freshness 校验与本次门禁运行一致。
-    try:
-        dl_path = ws / "state" / "decision_log.json"
-        dl = gc.load_json(dl_path, None)
-        if isinstance(dl, dict):
-            dl["last_updated"] = gc.iso_now()
-            gc.save_json(dl_path, dl)
-    except Exception as exc:
-        print(f"WARN 更新 decision_log.last_updated 失败: {exc}", file=sys.stderr)
-
     print("")
     for name, g in gates_out.items():
         print(f"  {name:<20} -> {g['status']}")
+    print(f"  {'workflow_order':<20} -> {'PASS' if wo['ok'] else 'FAIL'} ({wo['message']})")
     print(f"OVERALL: {summary['overall']}（{summary['passed']}/{summary['total']} 通过）")
     print(f"聚合报告: {report_file}")
     print(f"运行记录: {gc.runtime_path(ws)}")

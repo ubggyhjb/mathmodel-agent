@@ -54,23 +54,25 @@ def force_utf8():
             pass
 
 
-# 内置白名单：与任何结果无关的通用常数。数值匹配优先于白名单（结果里有的值不算白名单）。
+# 内置白名单：与任何结果无关的通用常数。v4（任务书 28 条）：value-only 白名单不可靠
+# （"论文里没有来源的 20 可能因为它是 ±20% 扰动而被放过"），内置项一律带 context_regex，
+# 论文 token 所在上下文必须命中才允许；数值匹配（结果真值）仍优先于白名单。
 BUILTIN_ALLOWLIST = {
-    0.05: "显著性水平 0.05（内置）",
-    0.01: "显著性水平 0.01（内置）",
-    0.1: "显著性水平 0.10（内置）",
-    9.8: "重力加速度 9.8（内置）",
-    9.81: "重力加速度 9.81（内置）",
-    3.14159: "圆周率（内置）",
-    3.1416: "圆周率（内置）",
-    2024: "年份（内置）",
-    2025: "年份（内置）",
-    2026: "年份（内置）",
-    10: "常见百分比扰动 ±10%（内置）",
-    20: "常见百分比扰动 ±20%（内置）",
-    25: "MCM 页数限制 25 页（内置）",
-    30: "摘要评分占比 30%（内置）",
-    100: "百分数基准 100（内置）",
+    0.05: ("显著性水平 0.05（内置）", r"显著|0\.05"),
+    0.01: ("显著性水平 0.01（内置）", r"显著|0\.01"),
+    0.1: ("显著性水平 0.10（内置）", r"显著|0\.1\b|\b0\.10\b"),
+    9.8: ("重力加速度 9.8（内置）", r"重力|9\.8\b"),
+    9.81: ("重力加速度 9.81（内置）", r"重力|9\.81\b"),
+    3.14159: ("圆周率（内置）", r"圆周率|π|pi"),
+    3.1416: ("圆周率（内置）", r"圆周率|π|pi"),
+    2024: ("年份（内置）", r"年|20\d{2}"),
+    2025: ("年份（内置）", r"年|20\d{2}"),
+    2026: ("年份（内置）", r"年|20\d{2}"),
+    10: ("±10% 扰动（内置）", r"±\s*10|10\s*%"),
+    20: ("±20% 扰动（内置）", r"±\s*20|20\s*%"),
+    25: ("MCM 25 页限制（内置）", r"页|25"),
+    30: ("摘要评分 30%（内置）", r"30\s*%|30 分|评分"),
+    100: ("百分数基准 100（内置）", r"100\s*%|百分"),
 }
 
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
@@ -277,13 +279,18 @@ def match_truth(val, truths, tol_rel, tol_abs):
 
 
 def load_allowlist(allow_file):
-    """读取工作区白名单。返回 (allow_vals, allow_patterns)。"""
+    """读取工作区白名单。返回 (allow_vals, allow_patterns, allow_ctx)。
+    allow_vals: value -> note（显式 value-only 允许，用户授权）
+    allow_patterns: [(compiled, note)]
+    allow_ctx: [(value, compiled_context_regex, note)] —— v4：带上下文的条目，
+    论文 token 所在上下文必须命中 context_regex 才允许（任务书 28 条）。"""
     allow_vals = {}
     allow_patterns = []
+    allow_ctx = []
     path = Path(allow_file)
     if not path.is_file():
         print(f"INFO 未发现工作区白名单 {path}（PAPER_ONLY 数字需要在此登记来源）")
-        return allow_vals, allow_patterns
+        return allow_vals, allow_patterns, allow_ctx
     try:
         doc = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         for ent in doc.get("entries", []):
@@ -293,7 +300,14 @@ def load_allowlist(allow_file):
                       + json.dumps(ent, ensure_ascii=False), file=sys.stderr)
                 continue
             if "value" in ent:
-                allow_vals[float(ent["value"])] = note
+                ctx = str(ent.get("context_regex", "") or "").strip()
+                if ctx:
+                    try:
+                        allow_ctx.append((float(ent["value"]), re.compile(ctx), note))
+                    except (ValueError, re.error) as exc:
+                        print(f"WARN 白名单 value/context_regex 非法: {exc}", file=sys.stderr)
+                else:
+                    allow_vals[float(ent["value"])] = note
             elif "pattern" in ent:
                 try:
                     allow_patterns.append((re.compile(str(ent["pattern"])), note))
@@ -301,7 +315,7 @@ def load_allowlist(allow_file):
                     print(f"WARN 白名单 pattern 非法: {ent.get('pattern')} ({exc})", file=sys.stderr)
     except Exception as exc:
         print(f"WARN 白名单解析失败: {path} ({exc})", file=sys.stderr)
-    return allow_vals, allow_patterns
+    return allow_vals, allow_patterns, allow_ctx
 
 
 def load_authority(ws):
@@ -517,7 +531,7 @@ def main(argv=None):
         print(f"WARN 结果目录不存在: {results_dir}，所有论文数字都将视为无出处", file=sys.stderr)
 
     truths, truth_strings = collect_truths(results_dir)
-    allow_vals, allow_patterns = load_allowlist(allow_file)
+    allow_vals, allow_patterns, allow_ctx = load_allowlist(allow_file)
     authority_entries = load_authority(ws)
     fig_allow = load_figure_allowlist(fig_allow_file)
 
@@ -533,18 +547,38 @@ def main(argv=None):
                 traced.append(item)
                 used_truths.add(src)
                 continue
-            note = allow_vals.get(item["value"])
-            if note is None:
+            # v4（任务书 28 条）：白名单必须带上下文才可信——
+            # value-only 的显式条目（用户授权）允许；带 context_regex 的条目与内置白名单
+            # 都要求论文 token 上下文命中才 ALLOW，否则 UNTRACED（不得因"系统认为它是 ±20% 扰动"放过）。
+            ctx = str(item.get("ctx", "") or "")
+            note = None
+            if item["value"] in allow_vals:
+                note = allow_vals[item["value"]]
+            else:
                 for pat, pnote in allow_patterns:
                     if pat.fullmatch(item["token"]):
                         note = pnote
                         break
-            if note is None:
-                note = BUILTIN_ALLOWLIST.get(item["value"])
+                if note is None:
+                    for av, acc, anote in allow_ctx:
+                        if av == item["value"] and acc.search(ctx):
+                            note = anote
+                            break
+                if note is None:
+                    builtin = BUILTIN_ALLOWLIST.get(item["value"])
+                    if builtin is not None and re.search(builtin[1], ctx):
+                        note = builtin[0]
             if note is not None:
                 item["status"] = "ALLOWED"
                 item["note"] = note
                 allowed.append(item)
+                continue
+            # 内置白名单 value 命中但上下文不匹配：明确提示，禁止静默放过
+            if item["value"] in BUILTIN_ALLOWLIST:
+                item["status"] = "UNTRACED"
+                item["note"] = (f"内置白名单 {BUILTIN_ALLOWLIST[item['value']][0]} "
+                                f"但上下文不匹配（ctx={ctx[:60]}）——该值若无结果来源需显式登记 allowlist")
+                untraced.append(item)
                 continue
             item["status"] = "UNTRACED"
             untraced.append(item)

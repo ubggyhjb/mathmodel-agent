@@ -6,24 +6,41 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gate_common as gc
+import workflow_spec as wfs
 """check_decision_log.py — state/decision_log.json 结构校验与初始化。
 
 用法:
   python check_decision_log.py --workspace <项目根> [--create]
 
+阶段列表（v4）：从仓库根 workflow_spec.yaml 单一事实源加载（workflow_spec.py），
+不再手写顺序。decision_log 的 stages 键 = spec 中每阶段的 skill 名（如
+brainstorm-mathmodel / 7methodology-review ...），并保留 1start-mathmodel 入口键。
+
 检查项（任一不满足 → FAIL，退出码 1）:
   1. 文件存在且为合法 JSON 对象；
   2. 必需键齐全：problem / current_stage / stages / decisions / open_issues / last_updated；
-  3. stages 覆盖 6 个核心阶段（可选含 brainstorm-mathmodel 阶段），status 取值合法，且完成状态必须构成前缀
-     （不允许前面还有未完成阶段时后面阶段已完成；旧项目缺少可选头脑风暴阶段仍兼容）；
+  3. stages 覆盖全部 v4 核心阶段（brainstorm 可按旧项目兼容缺席），status 取值合法，
+     且完成状态必须构成前缀（不允许前面还有未完成阶段时后面阶段已完成）；
   4. 除 1start-mathmodel 外，每个 done/skipped 的阶段至少有一条 stage 匹配的 decision；
   5. open_issues 每条的 status 必须为 closed（盲评问题清单未闭环 = FAIL）；
-  6. current_stage 必须合法（核心阶段/头脑风暴阶段之一或 "complete"）。
+  6. current_stage 必须合法（任一阶段或 "complete"）。
 """
 
 
-STAGES = ["1start-mathmodel", "brainstorm-mathmodel", "2analysis-modeling", "3coding-visual",
-          "4drawio", "5writing", "6verity"]
+def _load_stages():
+    """从 workflow_spec.yaml 加载阶段 skill 名列表（含 1start 入口键）。"""
+    try:
+        spec = wfs.load_spec(wfs.repo_root(Path(__file__).resolve().parent))
+        skills = [str(s.get("skill", "")) for s in spec.get("stages", []) if s.get("skill")]
+        if skills:
+            return ["1start-mathmodel"] + skills
+    except Exception:
+        pass
+    # 回退（spec 缺失时显式报错而非静默用旧顺序）
+    raise RuntimeError("workflow_spec.yaml 无法加载：请检查仓库根目录的 workflow_spec.yaml（v4 单一事实源）")
+
+
+STAGES = _load_stages()
 REQUIRED_DECISION_STAGES = [s for s in STAGES if s != "1start-mathmodel"]
 CORE_STAGES = [s for s in STAGES if s != "brainstorm-mathmodel"]
 VALID_STATUS = {"pending", "in_progress", "done", "skipped"}

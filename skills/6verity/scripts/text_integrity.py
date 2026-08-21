@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+r"""text_integrity.py — v4 文本完整性门（任务书 十二、十三条）。
+
+提交级硬 FAIL 扫描：
+  1. 论文源（paper/**/*.tex|*.typ）中的占位/残留标记：
+       图 ?? / 表 ?? / 式 ?? / 裸 ?? / TODO / TBD / PLACEHOLDER / 待补 / 待续 / XXX / FIXME
+  2. 关键词行程序化检查：3-8 个；必含分隔符（；|;|，）；
+     整行除空格无任何分隔符 / 词数越界 → FAIL（v4 建议分隔符 ；）。
+  3. 编译产物扫描（paper/*.log / 或 --log 指定）：
+       undefined reference           -> FAIL（可配置 --allow-undefined-refs 用于未编译完的草稿）
+       undefined citation            -> FAIL
+       multiply-defined labels       -> FAIL
+       overfull hbox > severe_pt(默认 15pt) -> FAIL；<= severe_pt -> WARN
+  4. 正文中残留的 \ref{??} / \cite{??} 悬空标签（源级即 FAIL）。
+
+用法：
+  python text_integrity.py --workspace <项目根> [--strict] [--log paper/main.log]
+输出：reports/gates/text_integrity.json；退出码 0 PASS / 1 FAIL / 2 ERROR。
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+import gate_common as gc
+
+PLACEHOLDER_PATTERNS = [
+    (r"图\s*\?\?", "fig_placeholder"),
+    (r"表\s*\?\?", "tab_placeholder"),
+    (r"式\s*\?\?", "eq_placeholder"),
+    (r"(?<!图)(?<!表)(?<!式)\?\?", "bare_placeholder"),
+    (r"TODO", "todo"),
+    (r"TBD", "tbd"),
+    (r"PLACEHOLDER", "placeholder"),
+    (r"待补", "pending"),
+    (r"待续", "to_be_continued"),
+    (r"XXX", "xxx"),
+    (r"FIXME", "fixme"),
+    (r"\\ref\{[^}]*\?\?[^}]*\}", "dangling_ref"),
+    (r"\\cite\{[^}]*\?\?[^}]*\}", "dangling_cite"),
+]
+KEYWORD_SEPARATORS = ["；", ";", "，", ","]
+# 关键词一行里出现 3 个以上词但无分隔符 → 未分隔（乱炖）；2 个词无分隔符是常见合法简写？——
+# 不，CUMCM 惯例关键词以 ；分隔；此处规则 = 整行（去前缀后）无任何分隔符且词数 >= 3 才 FAIL，
+# 2 词且无分隔符记 WARN（允许"关键词：NIPT 风险"这类极短形式）。
+KEYWORDS_MIN = 3
+KEYWORDS_MAX = 8
+
+
+def scan_placeholders(ws: Path, strict: bool):
+    findings = []
+    paper = ws / "paper"
+    if not paper.is_dir():
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "paper_missing",
+                         "message": "paper/ 目录不存在，无法做文本完整性扫描"})
+        return findings
+    for p in sorted(paper.rglob("*")):
+        if p.suffix.lower() not in (".tex", ".typ"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for pat, name in PLACEHOLDER_PATTERNS:
+            for m in re.finditer(pat, text):
+                findings.append({"level": "FAIL" if strict else "WARN", "check": name,
+                                 "message": f"{p.relative_to(ws)}: 命中 {pat!r} -> {m.group(0)[:40]!r}"})
+    return findings
+
+
+def _strip_comments(text: str) -> str:
+    """剥离 LaTeX 注释行与行内注释（% 至行尾），不破坏内容。"""
+    return re.sub(r"(?m)%.*$", "", text)
+
+
+def _clean_kw_line(line: str) -> str:
+    """清除 latex 命令/花括号/宏参数标记，得到纯文本。"""
+    line = re.sub(r"\\[a-zA-Z]+", " ", line)
+    line = re.sub(r"#\d", " ", line)
+    line = re.sub(r"[{}\[\]]+", " ", line)
+    line = re.sub(r"\s+", " ", line)
+    return line.strip()
+
+
+def scan_keywords(ws: Path, strict: bool):
+    """关键词程序化检查。支持两种位置：
+      A) `关键词：<词…>`（前缀行）；
+      B) `\abstractcn{…}{<关键词>}` 等宏的第二参数（CUMCM 模板写法）。
+    规则：3-8 个词；无分隔符（；|;|，）且 >=3 词 -> FAIL；2 词无分隔符 -> WARN。
+    """
+    findings = []
+    paper = ws / "paper"
+    if not paper.is_dir():
+        return findings
+    kw_re = re.compile(r"关键词\s*[:：]\s*([^\n]*)")
+    macro_re = re.compile(r"\\abstractcn\s*\{.*?\}\s*\{([\s\S]*?)\}", re.S)
+    for p in sorted(paper.rglob("*")):
+        if p.suffix.lower() not in (".tex", ".typ"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if "关键词" not in text and "abstractcn" not in text:
+            continue
+        text = _strip_comments(text)
+        raw_lines = []
+        for m in kw_re.finditer(text):
+            raw_lines.append(m.group(1))
+        for m in macro_re.finditer(text):
+            raw_lines.append(m.group(1))
+        seen = set()
+        for raw in raw_lines:
+            line = _clean_kw_line(raw)
+            if not re.search(r"[\u4e00-\u9fffA-Za-z]", line):
+                continue  # 宏定义/模板说明等无实际词的内容
+            if line in seen:
+                continue
+            seen.add(line)
+            seps = [s for s in KEYWORD_SEPARATORS if s in line]
+            if seps:
+                words = [w for w in re.split(r"[；;，,]+", line) if w.strip()]
+            else:
+                words = [w for w in line.split() if w.strip()]
+            n = len(words)
+            if n < KEYWORDS_MIN or n > KEYWORDS_MAX:
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "keyword_count",
+                                 "message": f"{p.relative_to(ws)}: 关键词 {n} 个，超出 "
+                                            f"{KEYWORDS_MIN}-{KEYWORDS_MAX} 范围：{line[:60]}"})
+            if not seps and n >= 3:
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "keyword_separator",
+                                 "message": f"{p.relative_to(ws)}: 关键词未用分隔符（；/;，）分隔: "
+                                            f"{line[:60]}（官方模板默认 ； 分隔）"})
+            elif not seps and n == 2:
+                findings.append({"level": "WARN", "check": "keyword_separator",
+                                 "message": f"{p.relative_to(ws)}: 关键词 2 个且无分隔符，建议改用 ； 分隔: "
+                                            f"{line[:60]}"})
+    return findings
+
+
+def scan_compile_log(ws: Path, log_rel: str, strict: bool, severe_pt: float):
+    """扫描 LaTeX 编译日志 .log：undefined ref/citation、multiply-defined、overfull。"""
+    findings = []
+    log_path = Path(log_rel) if log_rel else (ws / "paper" / "main.log")
+    if not log_path.is_file():
+        return findings
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return findings
+    undef_ref = list(dict.fromkeys(re.findall(r"LaTeX Warning: Reference `[^']*' on page \d+ undefined", text)))
+    undef_cite = list(dict.fromkeys(re.findall(r"LaTeX Warning: Citation `[^']*' on page \d+ undefined", text)))
+    multi = list(dict.fromkeys(re.findall(r"LaTeX Warning: There were multiply-defined labels", text)))
+    overfull = re.findall(r"Overfull \\hbox \((\d+(?:\.\d+)?)pt too wide\)", text)
+    for m in undef_ref:
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "undefined_ref",
+                         "message": f"编译日志出现 undefined reference: {m}"})
+    for m in undef_cite:
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "undefined_citation",
+                         "message": f"编译日志出现 undefined citation: {m}"})
+    for m in multi:
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "multiply_defined_labels",
+                         "message": "编译日志出现 multiply-defined labels（标签冲突）"})
+    for m in overfull:
+        pt = float(m)
+        lvl = "FAIL" if pt > severe_pt else "WARN"
+        msg = (f"overfull hbox {pt}pt（severe 阈值 >{severe_pt}pt，本次判定 {lvl}"
+               f"{'，需视觉检查裁切' if lvl == 'WARN' else ''}）")
+        findings.append({"level": lvl, "check": "overfull_hbox", "message": msg})
+    return findings
+
+
+def main(argv=None):
+    gc.force_utf8()
+    ap = argparse.ArgumentParser(description="v4 文本完整性门")
+    ap.add_argument("--workspace", default=".")
+    ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--log", default=None, help="指定 .log 路径（默认 paper/main.log）")
+    ap.add_argument("--overfull-severe-pt", type=float, default=15.0)
+    ap.add_argument("--report", default=None)
+    args = ap.parse_args(argv)
+
+    ws = Path(args.workspace).resolve()
+    findings = []
+    findings.extend(scan_placeholders(ws, args.strict))
+    findings.extend(scan_keywords(ws, args.strict))
+    findings.extend(scan_compile_log(ws, args.log, args.strict, args.overfull_severe_pt))
+
+    fails = [f for f in findings if f["level"] == "FAIL"]
+    warns = [f for f in findings if f["level"] == "WARN"]
+    report = {
+        "gate": "text_integrity", "schema_version": 1, "workspace": str(ws),
+        "strict": args.strict, "engine": gc.manifest_engine(ws),
+        "findings": findings,
+        "summary": {"fails": len(fails), "warns": len(warns), "checks": len(findings)},
+        "note": "占位符/悬空引用/关键词分隔为提交级硬项；overfull ≤severe_pt 为 WARN 需视觉检查。",
+    }
+    out = Path(args.report).resolve() if args.report else ws / "reports" / "gates" / "text_integrity.json"
+    gc.save_json(out, report)
+    for f in findings:
+        print(f"  [{f['level']}] {f['check']}: {f['message']}")
+    print(f"TEXT_INTEGRITY: {'PASS' if not fails else 'FAIL'}（{len(fails)} FAIL / {len(warns)} WARN） -> {out}")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

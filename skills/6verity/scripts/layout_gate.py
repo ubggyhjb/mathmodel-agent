@@ -43,6 +43,7 @@ except ImportError:
     sys.exit(2)
 
 import gate_common as gc
+import layout_audit as la  # v4：物理越界审计合并进本门（方案 A，不再孤立运行）
 
 POLICY = gc.load_policy()
 A4_W, A4_H = POLICY.get("pages", {}).get("a4", [595.27, 841.89])
@@ -605,6 +606,28 @@ def main(argv=None):
 
     g = Gate(ws, engine, entry, pdf, figures_dir, args.strict)
     g.pdf_checks()
+
+    # v4：物理排版审计并入本门（layout_audit：越界>15pt FAIL / 8-15pt WARN / 行重叠 /
+    # 图片越界 / 近空页 / 页面尺寸）。原先 layout_audit 未被聚合门运行，导致
+    # 表 3 右越版心仍"九门全绿"——现在物理检查与源检查同门同报。
+    if pdf.is_file():
+        try:
+            phys_fails, phys_warns = la.audit(pdf)
+        except Exception as exc:
+            phys_fails = [f"physical audit 异常: {exc}"]
+            phys_warns = []
+        for f in phys_fails:
+            g.fails.append(f"physical: {f}")
+        for w in phys_warns:
+            g.warns.append(f"physical: {w}")
+        g.coverage["physical_audit"] = True
+        g.checks.append({"id": "physical_audit",
+                         "status": "FAIL" if phys_fails else "PASS",
+                         "message": f"物理越界审计: {len(phys_fails)} FAIL / {len(phys_warns)} WARN"})
+    else:
+        g.coverage["physical_audit"] = False
+        g.checks.append({"id": "physical_audit", "status": "WARN",
+                         "message": "未找到 PDF（paper/main.pdf），物理越界审计未执行"})
 
     supported = engine in ("latex", "typst")
     executed = False

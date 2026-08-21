@@ -33,7 +33,10 @@ figures/
 reports/DRAWIO_REPORT.md
 ```
 
-如果某类图不需要生成，必须在 `reports/DRAWIO_REPORT.md` 中说明原因。竞赛论文通常至少需要一张 `fig_roadmap` 技术路线图。
+如果某类图不需要生成，必须在 `reports/DRAWIO_REPORT.md` 中说明原因。**v4 不再默认要求技术路线图**：
+只有存在无法用正文/数据图更清楚表达的结构关系时才画概念图，且 **concept figure 全篇 ≤1 张**
+（CUMCM 不需要总路线 + Q1/Q2/Q3 flow + pipeline 各一张；新的 graphical abstract 类图
+已由 figure story 决定是否必要，此处不得画第二张）。
 
 读取这些文件的目的不是提取数据作图，而是理解论文方法、章节结构、子问题关系和已有图表，避免重复。
 
@@ -43,16 +46,11 @@ reports/DRAWIO_REPORT.md
 
 先读取以下文件（存在则读取）：`reports/ANALYSIS_MODELING_REPORT.md`、`reports/RESULTS_REPORT.md`、`figures/` 目录列表。
 
-然后从前序文档提取非数据图需求，输出一个清单：
+然后从前序文档提取非数据图需求，输出一个清单（v4：最多 1 张；通常为"空"——即本阶段标记 skipped）：
 
 ```text
-DRAWIO PLAN CHECKLIST:
-[ ] fig_roadmap      技术路线图，放在问题重述/绪论
-[ ] fig_flow_q1      问题一求解流程图
-[ ] fig_flow_q2      问题二求解流程图
-[ ] fig_flow_q3      问题三求解流程图
-[ ] fig_pipeline     数据处理流程图
-[ ] fig_model        模型结构/变量关系图
+DRAWIO PLAN CHECKLIST（v4：concept figure ≤1；无必要则整阶段 skipped）:
+[ ] （可选）fig_framework  方法/概念结构图（仅当数据图无法表达）
 ```
 
 清单不是固定模板，要根据题目实际删减或增补。不要为了凑图生成无意义图示。
@@ -83,11 +81,17 @@ DRAWIO PLAN CHECKLIST:
 - 相关性热力图
 - 分布图和箱线图
 
-### Step 3: 生成 DrawIO 源文件
+### Step 3: 生成可编辑源文件（按 renderer）
 
-每张图一个 `.drawio` 文件，放在 `figures/`。
+每张图一个**可编辑源文件**，格式按 renderer 定（v4：不再强制 `.drawio`，只要求存在可编辑 source）：
 
-DrawIO 内容要求：
+```text
+renderer=tikz   -> figures/fig_*.tex
+renderer=mermaid-> figures/fig_*.mmd
+renderer=drawio -> figures/fig_*.drawio
+```
+
+源内容要求：
 
 - 文字语言与论文语言一致。
 - 节点文字短，必要时双行，不堆长句。
@@ -140,13 +144,13 @@ else
 fi
 ```
 
-无论哪种渲染路径（TikZ/mermaid/drawio），`.drawio` 源文件都保留（可编辑性）；全部不可用时保留 `.drawio` 并在 `reports/DRAWIO_REPORT.md` 记录原因。
+无论哪种渲染路径，**只要求存在可编辑 source**（.tex/.mmd/.drawio 任一），并在 `reports/DRAWIO_REPORT.md` 记录 renderer 与导出结果；不强制格式必须是 drawio。
 
 ### Step 5: 自检和修复
 
 每张图必须检查：
 
-- `.drawio` 文件非空。
+- 可编辑源文件非空（.tex/.mmd/.drawio 按 renderer）。
 - 若导出成功，`.pdf` 文件非空。
 - 节点没有明显重叠。
 - 箭头不穿过核心节点。
@@ -156,7 +160,7 @@ fi
 - 文件名和图意一致。
 - 没有与 `3coding-visual` 的数据图重复。
 
-发现问题要修 `.drawio` 并重新导出，不要只在报告里解释。
+发现问题要修源文件并重新导出，不要只在报告里解释。
 
 ### Step 6: 写生成记录
 
@@ -180,7 +184,7 @@ fi
 
 ## 质量要求
 
-- 图示服务论文论证，不为装饰而画。
+- 图示服务论文论证，不为装饰而画；concept figure 全篇 ≤1 张。
 - 每张图必须能对应到`reports/ANALYSIS_MODELING_REPORT.md` 中的真实方法。
 - 数据型图表不得在本阶段重复生成。
-- 论文阶段引用的非数据图都应有 `.drawio` 源文件和 PDF，或者在 `reports/DRAWIO_REPORT.md` 说明导出失败。
+- 论文阶段引用的非数据图都应有可编辑源文件（.tex/.mmd/.drawio）和 PDF，或者在 `reports/DRAWIO_REPORT.md` 说明导出失败。

@@ -9,6 +9,23 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 
 本 skill 承接 `2analysis-modeling`。目标是把 `reports/ANALYSIS_MODELING_REPORT.md` 里的模型和算法落实为可复现程序，跑出可信结果，并生成论文中需要的数据型图表。
 
+## Step 0: 只实现模型契约（v4 强制，任务书第四章）
+
+**禁止把 ANALYSIS_MODELING_REPORT.md 当最终模型接口。** 唯一允许的模型定义 = `reports/FINAL_MODEL_SPEC.json`
+（7methodology-review 产出，schema 见仓库 `docs/FINAL_MODEL_SPEC.schema.md`）：
+
+- 逐问题核对 `problems[]`：analysis_unit / outcome(id,type,unit) / observation_mechanism /
+  primary_model / likelihood / covariates / excluded_covariates / validation。
+- 实现前先运行 `python <6verity>/scripts/methodology_gate.py --workspace . --strict`
+  确认契约本身无 FAIL；契约走查意见（如"同一 outcome 跨问题机制一致"）才允许开工。
+- 实现的模型名、协变量集合、删失机制必须与契约完全一致；存在分歧 = 先回 7methodology-review 改契约，
+  **禁止代码侧自行"变通"**（历史教训：Q3 用插值精确时间+右删失似然绕过契约 = 论文/代码/结果三层口径分裂）。
+- 每个结果 JSON 写入 `"model_spec_sha256": "<reports/FINAL_MODEL_SPEC.json 的 SHA256>"`；
+  契约修改（contract_rev +1）后必须重跑受影响结果。
+- 每张正式图用 `mathmodel-figure-templates/scripts/figure_builder.py`（FigureBuilder）出图：
+  数值从 results/*.json 经 `source_keys` 读取、单位变换经 `reports/variables.json`（unit registry），
+  保存时自动写 `figures/<id>.meta.json`（source_hash + panel artist 计数 + annotations raw/value）。
+
 ## 并行子代理策略（本环境用 subagent / workflow 工具）
 
 当子问题之间相互独立（无数据依赖）时，优先并行：同时派出 N 个代码手，每个子代理的 prompt 必须自包含——题目背景、该子问题的模型公式/目标函数/约束条件（从 ANALYSIS_MODELING_REPORT.md 摘录）、数据文件路径、输出文件路径约定（如 `code/problem1.py`、结果写入 `reports/` 或 `figures/` 的约定文件名）。每个子代理独立完成 编写→运行→约束校验→输出。全部完成后由主代理汇总写入 `reports/RESULTS_REPORT.md` 并做跨问题一致性检查（物理常数、数据来源统一）。
@@ -43,7 +60,7 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 2. 实现模型或算法。
 3. 验证约束。
 4. 输出核心结果。
-5. 绘制丰富的图表。
+5. 绘制满足 Figure Story 所需的最少充分图表（v4：先读 `figures/figure_manifest.json` 的 main_message/panels，只为"必须有一张图才说得清"的核心结论出图；禁止为凑数量/凑类型生成图表；每张正式图用 `figure_builder.py`（FigureBuilder）生成并写 `<id>.meta.json`）。
 6. 在 `reports/RESULTS_REPORT.md` 中写清楚方法、关键数值和校验结果。
 
 优化类问题必须先保证可行解，再优化目标值。预测类问题必须做训练/验证划分或合理误差评估。评价类问题必须说明指标方向、归一化方法和权重来源。
@@ -86,7 +103,7 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 本阶段内设两道独立质检，派只读 subagent 执行，**FAIL 必须由本阶段执行者修复后重派复验，主代理不得自行覆盖失败结论**：
 
 - **P1 最小可运行结果门**（全量计算与正式出图前）：子代理只拿 ANALYSIS_MODELING_REPORT 的任务清单 + code/ + results/，检查：每个子问题代码可运行、结果 JSON 存在且通过 verify_all.py、关键数字与建模报告口径一致、无 NaN/Inf。任一 FAIL → 修复后重跑，禁止先画图。
-- **P2 编程终检门**（正式图完成后）：子代理检查：结果表、三类图（原始数据/过程/结果）覆盖全部子问题且不少于约定数量、图数据与 results JSON 一致、复现清单（种子/依赖版本/运行命令）齐全。
+- **P2 编程终检门**（正式图完成后）：子代理检查：每个核心结论至少有一种最合适的视觉证据且图数据与 results JSON 一致（v4：**禁止"三类图覆盖每问"的数量导向**——原始数据/过程/结果各凑一张没意义，数量绝不作为验收项）、每张正式图带 `<id>.meta.json`（source_hash/annotations/panels 齐全）、复现清单（种子/依赖版本/运行命令）齐全。
 - 两道门的结论写入 RESULTS_REPORT.md 的"质检"小节。
 
 ### Step 3: 结果文件格式

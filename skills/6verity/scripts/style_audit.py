@@ -207,8 +207,14 @@ def main():
     else:
         bold_chars, body_chars, abstract_bare_ratio = abstract_bold_metrics(sp1, body_sz)
         abstract_ratio = bold_chars / max(1, body_chars)
-        if abstract_ratio < policy.get("abstract", {}).get("bold_ratio_min", 0.05) or abstract_ratio > policy.get("abstract", {}).get("bold_ratio_max", 0.15):
-            fails.append(f"摘要内容性加粗率 {abstract_ratio:.1%}（应在 5%-15%）")
+        if abstract_ratio == 0:
+            fails.append("摘要无内容性加粗（0 处）——官方优秀全库实证摘要必含加粗，禁止全平。")
+        elif abstract_ratio < policy.get("abstract", {}).get("bold_ratio_min", 0.05) or abstract_ratio > policy.get("abstract", {}).get("bold_ratio_max", 0.15):
+            # v4（任务书 21 条）：摘要加粗率 5-15% 是"推荐带"（recommended），不硬 FAIL；
+            # 只 WARN——为凑比例过度加粗/完全不加粗都是被它诱导的错误做法。
+            warns.append(f"摘要内容性加粗率 {abstract_ratio:.1%} 不在推荐带 5%-15%（v4 为 WARN，"
+                         "不因比例 FAIL；过加粗/欠加粗按视觉审查处置）")
+            print(f"WARN: 摘要内容性加粗率 {abstract_ratio:.1%}（推荐带 5%-15%）")
         else:
             print(f"PASS: 摘要内容性加粗率 {abstract_ratio:.1%}（5%-15%）")
         if abstract_bare_ratio > policy.get("abstract", {}).get("bare_digit_ratio_max", 0.5):
@@ -387,7 +393,10 @@ def main():
         if "\\toprule" not in body or "\\hline" in body:
             grid_bad += 1
     if grid_bad:
-        fails.append(f"{grid_bad} 个表格非三线表（必须 booktabs toprule/midrule/bottomrule，禁 hline 网格）")
+        # v4（任务书 22 条）：三线表是 CUMCM 默认优秀风格，而非官方硬规则——不再全局硬 FAIL，
+        # 降为 WARN；若竞赛模板合理使用其他表格样式，由 contest_profile 决定放行。
+        warns.append(f"{grid_bad} 个表格非三线表（默认优秀风格 booktabs toprule/midrule/bottomrule，"
+                     "禁 hline 网格；若竞赛模板合理使用其他样式由 contest_profile 放行）")
     else:
         print("PASS: 表格全部三线表")
 
@@ -461,8 +470,13 @@ def main():
         coverage["abstract_anchors"] = len(anchors)
         lo = int(policy.get("abstract", {}).get("min_chars", 600))
         hi = int(policy.get("abstract", {}).get("max_chars", 900))
-        if cjk_len < lo or cjk_len > hi:
-            fails.append(f"摘要 CJK 字数 {cjk_len} 不在 {lo}-{hi}（5writing 硬带）")
+        if cjk_len < 400 or cjk_len > 1500:
+            # 官方可判线（摘要一页以内 + 明显偏离推荐带）：明显越界仍 FAIL
+            fails.append(f"摘要 CJK 字数 {cjk_len} 明显越界（推荐带 {lo}-{hi}，官方可判线 400-1500）")
+        elif cjk_len < lo or cjk_len > hi:
+            # v4（任务书 21 条）：600-900 为推荐带（recommended），偏离不自动 FAIL，WARN + 视觉复核
+            warns.append(f"摘要 CJK 字数 {cjk_len} 不在推荐带 {lo}-{hi}（v4 为 WARN，不因字数 FAIL）")
+            print(f"WARN: 摘要 CJK 字数 {cjk_len}（推荐带 {lo}-{hi}）")
         else:
             print(f"PASS: 摘要 CJK 字数 {cjk_len}（{lo}-{hi}）")
         if len(anchors) != 4:

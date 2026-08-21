@@ -9,7 +9,7 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 
 本 skill 是 `2analysis-modeling` 之后、`3coding-visual` 之前的独立强制阶段（时序：`2analysis-modeling → 7methodology-review → 3coding-visual → 4drawio → 5writing → 6verity`）。它不写代码、不画图、不排论文；它把"模型定义是否成立"这件事从流程里显式拎出来，防止把一条不成立的方法学假设一路带到代码、图表和论文里。
 
-本 skill 的产出是 `reports/methodology/*.json` 一组方法学登记文件 + `reports/figure_story_manifest.json`，作为 `6verity` 阶段 v3 三门禁（methodology / leakage / figure_story）的**输入**。本阶段不满足，后续阶段必须停下修正。
+本 skill 的产出是 `reports/methodology/*.json` 一组方法学登记文件 + **`reports/FINAL_MODEL_SPEC.json`（v4 可执行模型契约）** + `reports/figure_story_manifest.json`，作为 `6verity` 阶段 v4 三门禁（methodology / leakage / figure_story）的**输入**，其中 FINAL_MODEL_SPEC 同时是 `3coding-visual`（只实现它）与 `5writing`（只描述它）的唯一模型接口。本阶段不满足，后续阶段必须停下修正。
 
 ## 数学建模规范参考
 
@@ -28,7 +28,7 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 - 本阶段不负责：写代码、跑实验、生成图表、排版论文（那分别是 `3coding-visual` / `4drawio` / `5writing` / `6verity`）。
 - 任一审计 FAIL：先回 `2analysis-modeling` 或直接修 JSON/建模口径，**禁止带病进入 `3coding-visual`**。
 
-## 产出入口（本 skill 的 7 个方法学 JSON + 1 个 Figure Story manifest）
+## 产出入口（7 个方法学 JSON + 1 个模型契约 + 1 个 Figure Story manifest）
 
 全部写入工作区 `reports/`：
 
@@ -41,7 +41,12 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 | `reports/methodology/model_necessity.json` | Step 5 | 模型必要性 / Ablation 分类 |
 | `reports/methodology/ml_operation_scope.json` | Step 6 | ML 操作数据范围登记 |
 | `reports/methodology/sample_sizes.json` | Step 7 | 样本量与不确定性 |
-| `reports/figure_story_manifest.json` | （`3coding-visual`/`6verity` 用） | 每张主图的 Figure Story 定义 |
+| `reports/FINAL_MODEL_SPEC.json` | 汇总（v4 强制） | **可执行模型契约**：逐问题声明 outcome/观测机制/likelihood/协变量/result_keys/figure_ids/paper_section（schema 见 `docs/FINAL_MODEL_SPEC.schema.md`）。`3coding-visual` 只实现它、`5writing` 只描述它、`6verity` 逐问核验它 |
+| `reports/figure_story_manifest.json` | （`3coding-visual`/`6verity` 用） | 每张主图的 Figure Story 定义（v4 迁移到 `figures/figure_manifest.json` 唯一清单） |
+
+**FINAL_MODEL_SPEC 生成规则**：完成 Step 1-7 后，为每个子问题写一条 problems[]（与题面问题数量一致）；
+同一 `outcome.id` 跨问题必须同一种删失机制（若不同，`mechanism_change_rationale` 必须非空并给证据）；
+`contract_rev` 从 1 起，修改契约必须 +1（触发依赖段落失效）。
 
 ## 工作流程
 

@@ -158,6 +158,36 @@ def verify(reference, record, error):
             "similarity": round(similarity, 4), "openalex_id": record.get("id"), "title": record.get("title"),
             "reason": "DOI matched" if doi_match else ("title similarity matched" if ok else "title similarity below 0.85")}
 
+def check_method_citations(workspace, keys, cited_keys):
+    """v4：reports/method_citation_map.json（核心方法 → 引用键映射）核验。
+    有映射时：方法引用的 key 必须存在于参考文献且被正文引用（无则 FAIL/WARN）。
+    无映射时：WARN 提示（核心 named method 应有文献来源）。"""
+    path = workspace / "reports" / "method_citation_map.json"
+    findings = []
+    if not path.is_file():
+        findings.append({"type": "method_map_missing",
+                         "reason": "未提供 reports/method_citation_map.json——核心命名方法（如 Turnbull/AFT/LMM/SMOTE）应声明文献来源"})
+        return findings
+    try:
+        mapping = json.loads(_text(path))
+    except Exception:
+        findings.append({"type": "method_map_broken", "reason": "method_citation_map.json 无法解析"})
+        return findings
+    for method, refs in (mapping or {}).items():
+        try:
+            refs = list(refs)
+        except TypeError:
+            refs = [refs]
+        for ref in refs:
+            if ref not in keys:
+                findings.append({"type": "method_no_ref", "method": str(method), "key": str(ref),
+                                 "reason": f"方法 {method} 引用的 {ref} 不在参考文献中"})
+            elif ref not in cited_keys:
+                findings.append({"type": "method_not_cited", "method": str(method), "key": str(ref),
+                                 "reason": f"方法 {method} 的文献 {ref} 在参考文献中但未被正文引用"})
+    return findings
+
+
 def main(argv=None):
     if gc: gc.force_utf8()
     parser = argparse.ArgumentParser(description="Verify LaTeX/Typst references with OpenAlex")
@@ -181,8 +211,13 @@ def main(argv=None):
     if not references:
         problems.append({"type": "missing_references", "reason": "no bibliography entries found"})
     problems += [{"type": "unverified_reference", "key": e["reference"]["key"]} for e in entries if e["verification"]["status"] != "verified"]
+    problems += check_method_citations(workspace, keys, cited_keys)
+    # method_citation_map 的"缺失 unverified"问题只算 WARN：在有 map 时若引用的文献本身未验证，
+    # verify 环节已报；method_map_missing 仅当 strict 时 FAIL（下同，按 strict 统一处理）。
+    map_fails = [p for p in problems if p.get("type") in ("method_no_ref", "method_not_cited", "method_map_broken")]
     report = {"schema_version": SCHEMA_VERSION, "workspace": str(workspace), "provider": "OpenAlex",
               "references": entries, "citations": citations, "missing_citations": missing, "problems": problems,
+              "method_citation_problems": map_fails,
               "summary": {"references": len(references), "citations": len(citations), "verified": len(entries)-unverified,
                           "unverified": unverified, "missing_citations": len(missing)}, "strict": args.strict}
     output = Path(args.report)
@@ -190,6 +225,11 @@ def main(argv=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"references={len(references)} verified={len(entries)-unverified} unverified={unverified} missing={len(missing)} report={output}")
-    return 1 if args.strict and problems else 0
+    # v4：method_map_missing 仅是建议（WARN 语义），其余问题（缺引用/未验证文献/
+    # 方法映射引用的文献无效）在 strict 下 FAIL。
+    if args.strict:
+        fatal = [p for p in problems if p.get("type") != "method_map_missing"]
+        return 1 if fatal else 0
+    return 0
 
 if __name__ == "__main__": sys.exit(main())

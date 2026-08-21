@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""attack_questions.py — v3 攻击式评委问题生成器（_mathmode.docx 二十五条）。
+"""attack_questions.py — v4 攻击式评委问题生成器 + 答辩销号门（任务书 三十三条）。
 
-从 methodology/leakage/figure_story 门禁报告与 reports/methodology/*.json 的事实出发，
-自动生成 ≥10 个"最难回答"的评审问题草稿，落到 reports/methodology/attack_questions.md。
-每个问题标注：主题（censoring/assumptions/degeneracy/necessity/leakage/sample_size/
-summary/figure）、由哪条检查触发、触发事实、可回答性（论文正文是否出现答案词——人工复核）。
+生成模式（默认）：从 methodology/leakage/figure_story 门禁报告事实生成 ≥10 条
+"最难回答"的评审问题草稿，落到 reports/methodology/attack_questions.md +
+attack_questions.json。每条带 severity（P0/P1/P2）、status（open/answered）、
+answer、evidence 字段，供答辩前逐条销号。
+  python attack_questions.py --workspace <项目根> [--min 10]
 
-用法：python attack_questions.py --workspace <项目根> [--min 10]
-输出：reports/methodology/attack_questions.md + attack_questions.json
-退出码 0 永远（生成器，不判 PASS/FAIL；答辩前人工确认全部问题可回答）。
+答辨门模式（--check）：校验 attack_questions.json：P0/P1 open > 0 -> FAIL（退出码 1）。
+  python attack_questions.py --workspace <项目根> --check
 """
 from __future__ import annotations
 
@@ -38,21 +38,52 @@ def scan_text(ws: Path) -> str:
     return " ".join(parts)
 
 
-def q(topic, trigger, question, answerable_hint=None):
+def q(topic, trigger, question, answerable_hint=None, severity="P1"):
     return {"topic": topic, "trigger": trigger, "question": question,
+            "severity": severity, "status": "open", "answer": "", "evidence": [],
             "answerable_in_text": answerable_hint is None or answerable_hint != "",
             "hint": answerable_hint or ""}
 
 
+def check_resolution(ws: Path, strict: bool):
+    """答辩销号门：P0/P1 open > 0 -> FAIL。"""
+    findings = []
+    doc = gc.load_json(ws / JSON_REL, None)
+    if not isinstance(doc, dict) or not isinstance(doc.get("questions"), list):
+        return {"level": "FAIL" if strict else "WARN", "check": "attack_resolution",
+                "message": f"{JSON_REL} 缺失：答辩问题清单未生成（attack_questions.py 未运行）"}
+    qs = doc["questions"]
+    open_p0p1 = []
+    for item in qs:
+        sev = str(item.get("severity", "P2")).upper()
+        status = str(item.get("status", "open")).lower()
+        if status in ("open", "pending", "") and sev in ("P0", "P1"):
+            open_p0p1.append(item.get("question", "?")[:60])
+    if open_p0p1:
+        return {"level": "FAIL" if strict else "WARN", "check": "attack_resolution",
+                "message": f"答辩问题 P0/P1 未销号 {len(open_p0p1)} 条（open>0 -> FAIL）："
+                           + "；".join(open_p0p1[:3])}
+    return {"level": "OK", "check": "attack_resolution",
+            "message": f"答辩问题 {len(qs)} 条，P0/P1 全部销号（answered）"}
+
+
 def main(argv=None):
     gc.force_utf8()
-    ap = argparse.ArgumentParser(description="v3 攻击式评委问题生成器")
+    ap = argparse.ArgumentParser(description="v4 攻击式评委问题生成器 + 答辩销号门")
     ap.add_argument("--workspace", default=".")
     ap.add_argument("--min", type=int, default=10)
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--check", action="store_true", help="答辩销号门：P0/P1 open>0 -> FAIL")
+    ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
 
     ws = Path(args.workspace).resolve()
+    if args.check:
+        r = check_resolution(ws, args.strict)
+        print(f"  [{r['level']}] {r['check']}: {r['message']}")
+        print(f"ATTACK_RESOLUTION: {'PASS' if r['level'] == 'OK' else 'FAIL'}")
+        return 1 if r["level"] == "FAIL" else 0
+
     mdir = ws / "reports" / "methodology"
     gates = ws / "reports" / "gates"
     dgp = gc.load_json(mdir / "data_generating_process.json", {}) or {}

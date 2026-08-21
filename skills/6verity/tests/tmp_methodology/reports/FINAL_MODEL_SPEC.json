@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "project": "fixture-methodology",
+  "generated_at": "2026-01-01T00:00:00+08:00",
+  "generated_by": "7methodology-review",
+  "contract_rev": 1,
+  "problems": [
+    {
+      "problem_id": "Q1",
+      "analysis_unit": "pregnant_woman",
+      "outcome": {
+        "id": "T_threshold",
+        "type": "time_to_event",
+        "unit": "week",
+        "definition": "首次达到高风险阈值的时间"
+      },
+      "observation_mechanism": {
+        "left_censoring": false,
+        "interval_censoring": true,
+        "right_censoring": false,
+        "note": "fixture"
+      },
+      "primary_model": "interval_censored_weibull_aft",
+      "likelihood": "interval",
+      "likelihood_evidence": ["区间删失", "Turnbull", "interval-censored"],
+      "covariates": ["BMI"],
+      "excluded_covariates": {},
+      "validation": "nested cv",
+      "result_keys": [],
+      "figure_ids": ["fig1"],
+      "paper_section": "main.tex",
+      "mechanism_change_rationale": ""
+    }
+  ]
+}

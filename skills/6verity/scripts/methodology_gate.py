@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -267,7 +268,211 @@ def check_conclusion_strength(ss, text, strict, findings):
         findings.append(_ok("conclusion", f"强结论词 {strong_hits} 有足量证据支撑（需人工复核样本量与 CI）"))
 
 
-# ---------- 汇总工具 ----------
+# ---------- v4 FINAL_MODEL_SPEC 模型契约（per-problem 审查） ----------
+#
+# 契约 = 7methodology-review 产出的 reports/FINAL_MODEL_SPEC.json（schema 见
+# docs/FINAL_MODEL_SPEC.schema.md）。审查不是"全文出现关键词"，而是：
+#   1. 同一 outcome.id 在不同问题中的 observation_mechanism 必须一致
+#      （不一致且无 mechanism_change_rationale -> FAIL，抓"Q2 区间删失 / Q3 精确+右删失"）；
+#   2. 每问题章节（paper_section）必须出现该问题 likelihood_evidence 证据词；
+#   3. results/*.json 必须携带 model_spec_sha256 且与本契约 SHA256 一致；
+#   4. 论文正文必须声明消费了 FINAL_MODEL_SPEC（WARN 级）。
+SPEC_REL = "reports/FINAL_MODEL_SPEC.json"
+MECHANISM_WORDS = {
+    "left_censoring": ["左删失", "left-censored", "left censoring"],
+    "interval_censoring": ["区间删失", "interval-censored", "interval censoring"],
+    "right_censoring": ["右删失", "right-censored", "right censoring"],
+    "truncation": ["截断"],
+}
+
+
+def read_cleaned_rel(ws: Path, rel: str) -> str:
+    """读取 paper/ 下某文件并清洗为纯文本（与 scan_paper_text 同一套简化）。"""
+    p = ws / "paper" / rel
+    if not p.is_file():
+        return ""
+    try:
+        t = p.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    t = re.sub(r"(?m)%.*$", "", t)
+    t = re.sub(r"(?m)//.*$", "", t)
+    t = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^{}]*\})?", " ", t)
+    t = re.sub(r"#[a-zA-Z-]+", " ", t)
+    t = re.sub(r"[{}\[\]]", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
+def problem_section_paths(ws: Path, problem: dict) -> list:
+    """解析某问题对应的论文章节文件（优先 spec.paper_section，其次 glob 猜测）。"""
+    rel = str(problem.get("paper_section", "")).strip()
+    if rel:
+        return [rel] if (ws / "paper" / rel).is_file() else []
+    pid = str(problem.get("problem_id", ""))
+    num = re.sub(r"\D", "", pid)
+    pattern = f"*problem{num}*" if num else "*"
+    out = []
+    paper = ws / "paper"
+    if paper.is_dir():
+        for p in sorted(paper.rglob(pattern)):
+            if p.suffix.lower() in (".tex", ".typ"):
+                out.append(p.relative_to(paper).as_posix())
+    return out
+
+
+def check_model_spec(spec, ws, text, strict, findings):
+    if not isinstance(spec, dict) or not isinstance(spec.get("problems"), list) or not spec["problems"]:
+        _violation(findings, "model_spec",
+                   "FINAL_MODEL_SPEC.json 缺失或 problems 为空：方法审查后未产出可执行模型契约（v4 强制）",
+                   strict)
+        return
+    problems = spec["problems"]
+    findings.append(_ok("model_spec", f"契约已产出：{len(problems)} 个问题，contract_rev={spec.get('contract_rev', '?')}"))
+    for p in problems:
+        pid = str(p.get("problem_id", "?"))
+        mech = p.get("observation_mechanism") or {}
+        # 1) 机制声明词逐节核验
+        secs = problem_section_paths(ws, p)
+        if not secs:
+            _violation(findings, "model_spec",
+                       f"问题 {pid} 未找到论文章节（声明 paper_section 或按 *problem{N}* 匹配失败）——无法逐问题核验",
+                       strict)
+            continue
+        sec_text = " ".join(read_cleaned_rel(ws, s) for s in secs).lower()
+        missing_mech = []
+        for field, words in MECHANISM_WORDS.items():
+            if field == "truncation":
+                continue
+            if mech.get(field) and not any(w in sec_text for w in words):
+                missing_mech.append(field)
+        if missing_mech:
+            _violation(findings, "model_spec",
+                       f"问题 {pid} 章节（{secs[0]}）未出现契约声明的删失机制词：{missing_mech}",
+                       strict)
+        # 2) likelihood 证据词逐节核验（不许全文兜底；按"证据组"口径：每组至少一词出现；
+        #    组由上一步 observation_mechanism 声明决定——声明了哪种删失才要求那种证据词）
+        lik = str(p.get("likelihood", "")).strip()
+        EVIDENCE_PAIRS = {
+            "left_censoring": ["左删失", "left-censored"],
+            "interval_censoring": ["区间删失", "interval-censored", "interval censoring"],
+            "right_censoring": ["右删失", "right-censored"],
+        }
+        lik_groups = []
+        if lik in ("interval", "exact") and lik == "interval":
+            lik_groups = [EVIDENCE_PAIRS[k] for k in ("left_censoring", "interval_censoring", "right_censoring")
+                          if mech.get(k)]
+            if not lik_groups:
+                lik_groups = [EVIDENCE_PAIRS["interval_censoring"]]
+        elif lik == "exact":
+            lik_groups = [["精确", "exact"]]
+        ev = [str(e) for e in (p.get("likelihood_evidence") or []) if str(e).strip()]
+        if lik_groups:
+            missing_groups = [g for g in lik_groups if not any(w.lower() in sec_text for w in g)]
+            if missing_groups:
+                _violation(findings, "model_spec",
+                           f"问题 {pid} 章节（{secs[0]}）缺少契约证据词组：{missing_groups}（likelihood={lik}）——"
+                           f"该问可能沿用了过时模型表述",
+                           strict)
+            else:
+                findings.append(_ok("model_spec", f"问题 {pid} 章节出现契约证据词组 {len(lik_groups)} 组"))
+        elif ev and lik not in ("", "none"):
+            missing_ev = [e for e in ev if e.lower() not in sec_text]
+            if missing_ev:
+                _violation(findings, "model_spec",
+                           f"问题 {pid} 章节（{secs[0]}）缺少契约证据词：{missing_ev}（likelihood={lik}）",
+                           strict)
+            else:
+                findings.append(_ok("model_spec", f"问题 {pid} 章节出现契约证据词 {ev[:3]}"))
+        elif lik not in ("", "none") and not ev:
+            findings.append(_warn("model_spec", f"问题 {pid} 未声明 likelihood_evidence——逐节核验降级为弱检查"))
+
+    # 3) 同一 outcome.id 跨问题机制一致性（抓 false-pass 的关键规则）
+    groups = {}
+    for p in problems:
+        oid = (p.get("outcome") or {}).get("id")
+        if oid:
+            groups.setdefault(str(oid), []).append(p)
+    for oid, plist in groups.items():
+        def _mech_core(m):
+            # 只比较机制类字段（忽略 note/说明等自由文本）
+            return {k: bool((m or {}).get(k)) for k in
+                    ("left_censoring", "interval_censoring", "right_censoring", "truncation")}
+        base = _mech_core(plist[0].get("observation_mechanism"))
+        for p in plist[1:]:
+            cur = _mech_core(p.get("observation_mechanism"))
+            if cur != base and not str(p.get("mechanism_change_rationale", "")).strip():
+                _violation(findings, "model_spec",
+                           f"同一目标变量 {oid} 在问题 {plist[0].get('problem_id')} 与 {p.get('problem_id')} "
+                           f"的观测机制不一致且无 mechanism_change_rationale——疑似该问沿用旧口径",
+                           strict)
+
+    # 4) result JSON 的 model_spec_sha256 校验（results 已生成时必须对齐）
+    spec_hash = gc.sha256_file(ws / SPEC_REL)
+    res_dir = ws / "results"
+    if res_dir.is_dir():
+        res_jsons = [p for p in sorted(res_dir.glob("*.json"))]
+        with_spec = []
+        for rj in res_jsons:
+            doc = gc.load_json(rj, None)
+            if isinstance(doc, dict) and doc.get("model_spec_sha256"):
+                with_spec.append((rj, doc["model_spec_sha256"]))
+        if res_jsons:
+            if not with_spec:
+                _violation(findings, "model_spec",
+                           f"results/ 已有 {len(res_jsons)} 个 JSON 但均未写 model_spec_sha256（v4 强制：结果必须绑定契约）",
+                           strict)
+            for rj, h in with_spec:
+                if h != spec_hash:
+                    _violation(findings, "model_spec",
+                               f"{rj.name} 的 model_spec_sha256 与当前契约不一致——结果由旧模型定义生成",
+                               strict)
+                else:
+                    findings.append(_ok("model_spec", f"{rj.name} 绑定当前契约 ({h[:12]})"))
+
+    # 5) 论文声明消费契约 + contract_rev 失效传播（任务书 二十四条）
+    if "FINAL_MODEL_SPEC" not in text and "final_model_spec" not in text.lower():
+        findings.append(_warn("model_spec", "论文未声明消费 FINAL_MODEL_SPEC——建议在模型方法章节注明契约版本"))
+    cur_rev = int(spec.get("contract_rev", 0) or 0)
+    revs = [int(r) for r in re.findall(r"FINAL_MODEL_SPEC.{0,40}?rev\s*[=:]\s*(\d+)", text, re.S)]
+    if revs and cur_rev:
+        if max(revs) < cur_rev:
+            _violation(findings, "model_spec",
+                       f"论文声明的模型契约 rev={max(revs)} 落后于当前契约 rev={cur_rev}——"
+                       f"摘要/方法/结果/小结/优缺点/灵敏度/结论中依赖该模型的段落可能仍用旧口径（stale）",
+                       strict)
+        else:
+            findings.append(_ok("model_spec", f"论文注明契约版本 rev={max(revs)}，与当前契约一致"))
+
+
+def conditional_required_inputs(dgp, spec, mdir, strict, findings):
+    """v4（任务书 6 条）：方法学输入条件必需（适用就硬 FAIL，不适用不机械要求）。
+       - DGP 存在删除失      -> censoring_report.json 必须存在；
+       - 存在分类/监督学习问题 -> ml_operation_scope.json 必须存在；
+       - 存在时间事件/优化决策 -> optimization_degeneracy.json 必须存在。"""
+    cens = (dgp or {}).get("censoring") or {}
+    has_censoring = any(cens.get(k) for k in ("left", "interval", "right"))
+    kinds = []
+    for p in (spec or {}).get("problems", []) or []:
+        ot = str((p.get("outcome") or {}).get("type", ""))
+        lik = str(p.get("likelihood", ""))
+        kinds.append((ot, lik))
+    has_ml = any(ot == "binary" for ot, _ in kinds) or bool(
+        spec and re.search(r"交叉验证|cross.?valid|nested", json.dumps(spec, ensure_ascii=False)[:4000], re.I))
+    has_opt = any(ot == "time_to_event" or lik == "interval" for ot, lik in kinds)
+
+    checks = [
+        (has_censoring, "censoring_report.json", "DGP 声明存在删失（left/interval/right）"),
+        (has_opt, "optimization_degeneracy.json", "存在时间事件/区间删失优化决策问题"),
+        (has_ml, "ml_operation_scope.json", "存在分类（监督学习）问题"),
+    ]
+    for cond, name, why in checks:
+        if cond and not (mdir / name).is_file():
+            _violation(findings, "conditional_input",
+                       f"条件必需输入缺失：{why} -> {M_DIR_REL}{name} 必须存在（7methodology-review 强制）",
+                       strict)
+    return findings
+
 
 def _ok(check, msg):
     return {"level": "OK", "check": check, "message": msg}
@@ -307,12 +512,18 @@ def main(argv=None):
     nec = load("model_necessity.json")
     ss = load("sample_sizes.json")
     cens_repo = load("censoring_report.json")
+    spec = gc.load_json(ws / SPEC_REL, None)
 
     text = scan_paper_text(ws)
 
     if missing and args.strict:
         for name in missing:
             _violation(findings, "input", f"必要输入缺失：{M_DIR_REL}{name}", strict=args.strict)
+
+    # v4：模型契约 per-problem 审查（契约缺失在 strict 下 FAIL）
+    check_model_spec(spec, ws, text, args.strict, findings)
+    # v4：条件必需输入（任务书 6 条：适用就硬 FAIL，不适用不机械要求）
+    conditional_required_inputs(dgp, spec, mdir, args.strict, findings)
 
     if dgp is not None:
         check_dgp(dgp, text, args.strict, findings)
@@ -348,6 +559,7 @@ def main(argv=None):
         "gate": "methodology", "schema_version": 1, "workspace": str(ws),
         "strict": args.strict, "engine": gc.manifest_engine(ws),
         "inputs": {k: (True if (mdir / k).is_file() else False) for k in REQUIRED_INPUTS + ["optimization_degeneracy.json", "censoring_report.json"]},
+        "model_spec_present": isinstance(spec, dict),
         "missing_inputs": missing,
         "findings": findings,
         "summary": {"fails": len(fails), "warns": len(warns), "checks": len(findings)},
