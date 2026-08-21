@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "note": "推荐风格视图（_mathmode.docx 二十一条）：经验规则（优秀论文统计/医学期刊惯例），非官方硬规定；门禁阈值以 style_policy.json 为单一事实源，本文件仅作人读分类视图。",
+  "rules": [
+    {"rule": "图内字号 = 正文 0.75-0.8 倍；最终 PDF 100% 时 tick ≥8pt / axis label ≥9pt / legend ≥8pt / panel label ≥10pt", "basis": "_mathmode.docx 二十三条；官方展示论文统计", "level": "recommended"},
+    {"rule": "摘要内容性加粗率 5-15% 为实操带（官方展示论文统计，非官方硬规定）；每问最多 1 个核心粗体短语；不单独加粗 p/r/R²/SE/CI/模型缩写/裸数字；关键词标签可粗、关键词正文不粗", "basis": "_mathmode.docx 十一条；官方全库实证", "level": "recommended"},
+    {"rule": "正文一个自然段最多 1 处内容性粗体（最终答案/最关键模型结论/少数核心指标/表格最终推荐值可粗）", "basis": "_mathmode.docx 十一条", "level": "recommended"},
+    {"rule": "摘要结构：问题 → 关键发现 → 核心方法 → 最终结果；每问最多 1-2 个模型名，控制缩写数量（杜绝『模型名报菜名』）", "basis": "_mathmode.docx 十条", "level": "recommended"},
+    {"rule": "色板：主模型深蓝 #2166ac / 风险异常橙红 #e64b35 / 普通对照中灰 #7f7f7f / 背景数据浅灰 #c8c8c8 / 第三强调青绿 #2a9d8f；颜色用于强调不用于平均分组", "basis": "_mathmode.docx 十三条；Nature Medicine/Lancet DH 等惯例", "level": "recommended"},
+    {"rule": "图内：原始散点浅灰高透明、主趋势线 2-2.5pt、次要曲线 1.2-1.5pt、CI 同色低透明、阈值浅灰细虚线；去 top/right spine、默认无垂直网格、水平网格极淡、白底；优先 direct labeling 替代 legend", "basis": "_mathmode.docx 十三条", "level": "recommended"},
+    {"rule": "三维图标题写结论（如『BMI 升高使 90% 达标时点持续后移』），方法说明放图注", "basis": "_mathmode.docx 十三条", "level": "recommended"},
+    {"rule": "正文核心图 ≤10-12 张，其中 primary 主 Figure ≤5-6 张；每张图先定 Figure Story（main_message/unique_information）再绘制", "basis": "_mathmode.docx 十二、十四条", "level": "recommended"},
+    {"rule": "系数/效应统一用 forest plot（point estimate + 95% CI + 零线）；减少纯 bar chart、星号显著性、每根柱标数字", "basis": "_mathmode.docx 十七、十八条", "level": "recommended"},
+    {"rule": "论文技术路线图做成 scientific graphical abstract（少节点/强留白/细连接线/mini-plots/数据流而非文字流），禁止大矩形框+大段文字", "basis": "_mathmode.docx 十九条", "level": "recommended"},
+    {"rule": "表格统一三线表（booktabs）：无竖线、表头加粗、最终推荐值可粗、CI/p/样本量正常字重、数字按小数位对齐、单位写表头", "basis": "官方论文格式规范建议(三线表) + 优秀论文统计", "level": "recommended"},
+    {"rule": "结论强度与证据匹配：强证据『建议/稳定表明』；中等『结果显示/数据支持』；小样本或宽 CI『数据提示/可作为参考/建议窗口约为』；探索性『初步结果提示』", "basis": "_mathmode.docx 九条", "level": "recommended"},
+    {"rule": "正文行距与页边距按模板 geometry 默认；禁止为凑版面缩行距/塞字（近空页处置 = 放大核心图 10-20%）", "basis": "现有 layout_gate 处置纪律", "level": "recommended"},
+    {"rule": "正文 ≤30 页之外留白与页底空白：文本页 70-85%、图页 60-80% 为经验舒适带", "basis": "layout_gate page_fill 阈值", "level": "recommended"}
+  ]
+}

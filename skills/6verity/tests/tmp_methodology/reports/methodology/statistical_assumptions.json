@@ -1,0 +1,1 @@
+{"independence":"conditional_on_random_effects","conditional_independence":"conditional on fixed effects","homoscedasticity":"plausible","distribution":"logistic","censoring_assumption":"noninformative","missingness_assumption":"none","random_effect_structure":"random intercept per woman"}

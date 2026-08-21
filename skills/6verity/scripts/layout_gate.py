@@ -56,6 +56,9 @@ FILL_TOP_MARGIN = POLICY.get("pages", {}).get("page_fill_top_margin", 0.08)
 FILL_BOTTOM_MARGIN = POLICY.get("pages", {}).get("page_fill_bottom_margin", 0.10)
 FIG_FAIL_PT = POLICY.get("figures", {}).get("min_effective_font_fail_pt", 5.0)
 FIG_WARN_PT = POLICY.get("figures", {}).get("min_effective_font_warn_pt", 6.0)
+# v3 推荐档（_mathmode.docx 二十三条）：最终 PDF 100% 时 tick ≥8pt / axis label ≥9pt /
+# legend ≥8pt / panel label ≥10pt；6-8pt 区间为 WARN 级提示，不 FAIL。
+FIG_RECOMMEND_PT = POLICY.get("figures", {}).get("min_effective_font_recommend_pt", 8.0)
 SIDE_BY_SIDE_MAX = POLICY.get("figures", {}).get("side_by_side_max_texwidth", 0.5)
 
 TEX_INCLUDE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
@@ -388,7 +391,7 @@ class Gate:
                  f"figure 缺 caption: {no_caption}" if no_caption else "figure 均有 caption")
 
         # 有效字号
-        bad, warn, skip = [], [], []
+        bad, warn, recommend, skip = [], [], [], []
         effs = []
         for p, wpt, src_name in placed:
             if p.suffix.lower() != ".pdf":
@@ -412,9 +415,14 @@ class Gate:
                 bad.append(tag)
             elif eff < FIG_WARN_PT:
                 warn.append(tag)
+            elif eff < FIG_RECOMMEND_PT:
+                recommend.append(tag)
         self.coverage["fig_text_size"] = True
         if bad or warn:
             self.add("fig_text_size", "FAIL" if bad else "WARN", "; ".join(bad + warn))
+        elif recommend:
+            self.add("fig_text_size", "WARN",
+                     "；".join(recommend) + "（推荐档：有效字号应 ≥8pt，tick ≥8 / axis label ≥9 / panel label ≥10）")
         elif effs:
             self.add("fig_text_size", "PASS",
                      f"被引图源有效字号达标（最小 {min(effs):.1f}pt，{len(effs)} 张）")
@@ -535,7 +543,7 @@ class Gate:
         return placed
 
     def figure_size_eval(self, placed):
-        bad, warn, skip = [], [], []
+        bad, warn, recommend, skip = [], [], [], []
         for p, wpt, src_name in placed:
             if p.suffix.lower() != ".pdf":
                 skip.append(f"{p.name}（位图）")
@@ -557,9 +565,16 @@ class Gate:
                 bad.append(tag)
             elif eff < FIG_WARN_PT:
                 warn.append(tag)
+            elif eff < FIG_RECOMMEND_PT:
+                recommend.append(tag)
         self.coverage["fig_text_size"] = True
-        self.add("fig_text_size", "FAIL" if bad else ("WARN" if warn else "PASS"),
-                 "; ".join(bad + warn) if (bad or warn) else "被引图源有效字号全部达标")
+        if bad or warn:
+            self.add("fig_text_size", "FAIL" if bad else "WARN", "; ".join(bad + warn))
+        elif recommend:
+            self.add("fig_text_size", "WARN",
+                     "；".join(recommend) + "（推荐档：有效字号应 ≥8pt，tick ≥8 / axis label ≥9 / panel label ≥10）")
+        else:
+            self.add("fig_text_size", "PASS", "被引图源有效字号全部达标")
         if skip:
             self.add("fig_skipped", "PASS", f"跳过: {skip}")
 

@@ -345,6 +345,9 @@ def main():
     else:
         print("PASS: 附录含支撑材料文件列表")
 
+    # ---- v3 粗体系统 v2 + 页面视觉密度：须在 d.close() 前计算 ----
+    bold_v2 = bold_metrics_v2(d, body_sz)
+    vis = page_visual_density(d)
     d.close()
 
     # --- tex 静态检查 ---
@@ -507,13 +510,22 @@ def main():
         print("PASS: 无英文直引号")
 
     result_pass = not fails
+    # ---- v3 粗体系统 v2 / 视觉密度：warns 汇入（计算见 d.close() 前） ----
+    for msg in bold_v2["warns"]:
+        warns.append(msg)
+    for msg in bold_v2["fails"]:
+        fails.append(msg)
+    for msg in vis["warns"][:3]:
+        warns.append(msg)
     report = {
         "gate": "style_audit",
         "engine": engine,
         "coverage": {**coverage, "abstract_bold_ratio": abstract_ratio,
                      "content_bold_ratio": abstract_ratio,
                      "abstract_bare_digit_ratio": abstract_bare_ratio,
-                     "body_bold_ratio": body_bold_ratio},
+                     "body_bold_ratio": body_bold_ratio,
+                     "bold_v2": bold_v2["summary"],
+                     "page_density": vis["pages"]},
         "content_bold_ratio": abstract_ratio,
         "body_bold_ratio": body_bold_ratio,
         "abstract_bare_digit_ratio": abstract_bare_ratio,
@@ -535,6 +547,94 @@ def main():
     mode = "--strict" if args.strict else "默认"
     print(f"RESULT: {'FAIL' if fails else 'PASS'}（{mode}模式，WARN {len(warns)}，FAIL {len(fails)}）")
     sys.exit(1 if fails else 0)
+
+
+# ---------- v3：粗体系统 v2 指标（_mathmode.docx 十一条） ----------
+
+_SYMBOL_BOLD_RE = re.compile(
+    r"^(?:p\s*[<>=]?\s*0?\.?\d+|r\s*[<>=]?\s*-?0?\.?\d+"
+    r"|R\s*2|R²|CI|SE|SD|adj\s*R\s*2|n\s*[=<>]?\s*\d+|"
+    r"-?\d+(?:\.\d+)?\s*%?)$")
+
+
+def bold_metrics_v2(d, body_sz):
+    """粗体系统 v2：span 计数/平均长度/孤立数值与符号粗体/每块密度。
+    全部 WARN/Fail 级：孤立 p 值/r/R²/CI/SE 加粗、短数字粗体、一段多短语。"""
+    warns, fails = [], []
+    n_spans = total_chars = 0
+    isolated = []
+    short_num_spans = 0
+    per_block_bold = []
+    for i in range(1, d.page_count):
+        for b in d[i].get_text("dict")["blocks"]:
+            if b.get("type") != 0:
+                continue
+            nb = 0
+            for l in b.get("lines", []):
+                for s in l["spans"]:
+                    if not isbold(s) or not 9 <= round(s["size"], 1) <= body_sz + 1.5:
+                        continue
+                    t = s["text"].strip()
+                    if not t:
+                        continue
+                    n_spans += 1
+                    total_chars += len(t)
+                    nb += 1
+                    if _SYMBOL_BOLD_RE.match(t):
+                        isolated.append(t)
+                        if i + 1 <= 2 or len(t) <= 6:
+                            short_num_spans += 1
+            if nb >= 1:
+                per_block_bold.append((i + 1, nb))
+    avg_len = total_chars / max(1, n_spans)
+    if isolated:
+        warns.append(
+            f"粗体系统 v2：孤立符号/数值加粗 {len(isolated)} 处（p 值、r、R²、CI、SE 或裸数字不得单独加粗，"
+            f"示例：{sorted(set(isolated))[:6]}）——规范禁止，建议包进结论短语或取消加粗")
+    if short_num_spans:
+        warns.append(f"粗体系统 v2：长度 <6 且主要为数字/符号的加粗 span {short_num_spans} 处（内容性粗体应为结论短语）")
+    dense_blocks = [(pg, nb) for pg, nb in per_block_bold if nb >= 3]
+    if len(dense_blocks) > max(2, 0.02 * len(per_block_bold)):
+        warns.append(
+            f"粗体系统 v2：一个文本块内 ≥3 处加粗的密集块 {len(dense_blocks)} 处（"
+            f"前 3：{dense_blocks[:3]}）——规范建议一段最多 1 处内容性粗体")
+    return {
+        "warns": warns, "fails": fails,
+        "summary": {"n_bold_spans": n_spans, "avg_span_len": round(avg_len, 2),
+                    "isolated_numeric_bold": isolated, "dense_blocks": len(dense_blocks)},
+    }
+
+
+# ---------- v3：页面视觉密度/视觉熵（_mathmode.docx 二十条） ----------
+
+def page_visual_density(d):
+    """每页统计 图数/表数/字号层级/粗体数/公式密度，页级 density=high 时 WARN。
+    公式数按 '(',')' 数学文本块近似：统计含较多符号的文本块。"""
+    pages = []
+    warns = []
+    n_high = 0
+    for i in range(d.page_count):
+        pg = d[i]
+        text = page_text(d, i)
+        n_images = len(pg.get_images(full=True))
+        n_fonts = len({round(s["size"], 1) for s in spans(d, i) if 8 <= round(s["size"], 1) <= 24})
+        n_bold = sum(1 for s in spans(d, i) if isbold(s) and len(s["text"].strip()) >= 2)
+        n_tables = len(re.findall(r"表\s*\d+", text))
+        n_figs = len(re.findall(r"图\s*\d+", text))
+        n_math = text.count("(") + text.count(")") + text.count("=")
+        score = (1 if n_images >= 2 else 0) + (1 if n_tables >= 2 else 0) + \
+                (1 if n_fonts >= 5 else 0) + (1 if n_bold >= 8 else 0) + \
+                (1 if n_math >= 60 else 0)
+        density = "high" if score >= 4 else ("medium" if score >= 2 else "low")
+        if density == "high":
+            n_high += 1
+            warns.append(
+                f"视觉密度 high（第{i+1}页）：图 {n_images} / 表 {n_tables} / 字号层级 {n_fonts} / "
+                f"粗体 {n_bold}——建议拆页或降级次要元素（视觉熵控，参照正文最舒服页面）")
+        pages.append({"page": i + 1, "images": n_images, "tables": n_tables,
+                      "font_levels": n_fonts, "bold_spans": n_bold,
+                      "math_sym": n_math, "density": density})
+    return {"pages": pages, "warns": warns, "n_high": n_high}
 
 
 if __name__ == "__main__":

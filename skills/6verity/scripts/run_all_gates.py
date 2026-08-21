@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_all_gates.py — v2 一键聚合门禁：manifest / layout / trace / style / decision / refs。
+"""run_all_gates.py — v3 一键聚合门禁：manifest / layout / trace / style / decision / refs / methodology / leakage / figure_story。
 
-六门全部为 Python（Windows 直接运行，sys.executable + 绝对路径调用）：
+九门全部为 Python（Windows 直接运行，sys.executable + 绝对路径调用）：
   project_manifest   --check       清单结构 + 工件哈希一致性
   layout_gate        --strict      引擎无关排版门（PDF 共享检查 + 源适配器 + 有效字号）
   trace_numbers      --strict      论文数字 <-> 结果 JSON 双向追溯
   style_audit        --strict      图表/排版/强调规范门（含真实摘要加粗率与附录全文）
   check_decision_log              决策日志结构/闭环 + freshness + 阶段产物绑定
   verify_refs        --strict      参考文献 OpenAlex/Crossref 核验
+  methodology        --strict      v3 Methodology Review（DGP/假设/删失/退化/必要性/样本量/结论强度）
+  leakage            --strict      v3 ML Leakage（操作范围登记 + 论文/代码启发式）
+  figure_story       --strict      v3 Figure Story（主图必填 main_message + 覆盖 + 去重）
 
 总体 PASS 硬条件（任一不满足 -> FAIL）：
   1. 每道门退出码 0；
@@ -55,6 +58,12 @@ def gate_specs(ws: Path, strict: bool, skip: set):
          ["--workspace", str(ws)], None),
         ("verify_refs", scripts / "verify_refs.py",
          ["--workspace", str(ws), *strict_args], "reports/gates/references_check.json"),
+        ("methodology", scripts / "methodology_gate.py",
+         ["--workspace", str(ws), *strict_args], "reports/gates/methodology_gate.json"),
+        ("leakage", scripts / "leakage_gate.py",
+         ["--workspace", str(ws), *strict_args], "reports/gates/leakage_gate.json"),
+        ("figure_story", scripts / "figure_story.py",
+         ["--workspace", str(ws), *strict_args], "reports/gates/figure_story.json"),
     ]
 
 
@@ -102,6 +111,9 @@ def semantic_problems(name, result, ws):
     elif name == "verify_refs":
         if doc is None:
             problems.append("verify_refs 未产出 JSON 报告")
+    elif name in ("methodology", "leakage", "figure_story"):
+        if doc is None:
+            problems.append(f"{name} 未产出 JSON 报告")
     return problems
 
 

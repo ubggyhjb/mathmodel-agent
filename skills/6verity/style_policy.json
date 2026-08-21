@@ -13,7 +13,10 @@
   "body": {
     "bold_ratio_min": 0.005,
     "bold_ratio_max": 0.08,
-    "bold_per_page_guideline": [0.01, 0.04],
+    "bold_per_page_guideline": [
+      0.01,
+      0.04
+    ],
     "max_pages": 30,
     "note": "正文加粗密度 0.5-8% 为诊断带；每页 1-4% 为写作指南（不硬 FAIL）。"
   },
@@ -22,10 +25,14 @@
     "min_effective_font_warn_pt": 6.0,
     "dpi_min": 300,
     "side_by_side_max_texwidth": 0.5,
-    "note": "有效字号 = 图内最小源字号 × (论文放置宽度 pt / 图源 MediaBox 宽度 pt)。"
+    "note": "有效字号 = 图内最小源字号 × (论文放置宽度 pt / 图源 MediaBox 宽度 pt)。",
+    "min_effective_font_recommend_pt": 8.0
   },
   "pages": {
-    "a4": [595.27, 841.89],
+    "a4": [
+      595.27,
+      841.89
+    ],
     "size_tolerance_pt": 2.0,
     "near_empty_chars": 60,
     "bottom_blank_ratio_warn": 0.55,
@@ -33,7 +40,7 @@
     "page_fill_max_warn": 0.99,
     "page_fill_gap_max_warn": 0.25,
     "page_fill_top_margin": 0.08,
-    "page_fill_bottom_margin": 0.10,
+    "page_fill_bottom_margin": 0.1,
     "note": "近空页：非首页且去空白文本 < 60 字符 WARN；整页空白 FAIL。page_fill=把内容区切成 12pt 条带，统计含文本行/图片的条带占用率，并测最大连续空带；占用率 <55% 或最大空带 >25% 内容高判偏空 WARN（处置=先放大核心图 10-20%，禁止塞字/缩行距），占用率 >99% 判偏满 WARN；文本页 70-85%、图页 60-80% 为经验舒适带。行带口径比纵向跨度更能抓“上下有内容、中间/底部大块空”的页面。"
   },
   "layout": {
@@ -43,7 +50,17 @@
     "margin_min_cm": 2.5
   },
   "appendix": {
-    "full_source_exts": [".py", ".m", ".R", ".jl", ".cpp", ".c", ".java", ".go", ".rs"]
+    "full_source_exts": [
+      ".py",
+      ".m",
+      ".R",
+      ".jl",
+      ".cpp",
+      ".c",
+      ".java",
+      ".go",
+      ".rs"
+    ]
   },
   "ai_decl": {
     "not_used": "本参赛队在竞赛过程中未使用任何 AI 工具。",
@@ -54,5 +71,19 @@
     "strict_default": true,
     "paper_tokens_min": 1,
     "note": "trace 扫描到的论文可追溯数字 token 为 0 时不得判 PASS。"
+  },
+  "v3": {
+    "bold_v2": {
+      "isolated_symbol_bold": {
+        "level": "WARN",
+        "note": "p/r/R²/CI/SE/裸数字单独加粗禁止；示例见 style_audit 输出"
+      },
+      "dense_block_spans": 3,
+      "note": "粗体系统 v2：加粗 span 计数/平均长度/孤立数值检测/块内密度（_mathmode.docx 十一条）；全部 WARN 级，由 style_audit 的 bold_metrics_v2 实现"
+    },
+    "visual_density": {
+      "high_score": 4,
+      "note": "每页视觉熵：图≥2/表≥2/字号层级≥5/粗体≥8/公式符号≥60 各计 1 分，≥4 分 visual density high WARN（_mathmode.docx 二十条）"
+    }
   }
 }

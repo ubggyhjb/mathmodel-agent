@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "note": "官方硬规则视图（_mathmode.docx 二十一条）：只收录『必须/禁止』级官方要求，来源全部标注官方文件；字号、行距、加粗率、色板等经验规则一律归 recommended_style.json，禁止把推荐风格表述为官方规定。门禁一切阈值以 style_policy.json 为单一事实源，本文件仅作人读分类视图。",
+  "rules": [
+    {"rule": "论文电子版不得含目录（2026 修订稿）", "source": "CUMCM 2026 比赛通知/修订说明", "level": "must_not"},
+    {"rule": "摘要页为电子版第 1 页，页码从摘要页起为 1 且页脚居中", "source": "CUMCM 2026 修订稿", "level": "must"},
+    {"rule": "正文（不含摘要与附录）不超过 30 页", "source": "CUMCM 2026 修订稿", "level": "must"},
+    {"rule": "电子版论文文件 ≤20MB", "source": "CUMCM 2026 修订稿", "level": "must"},
+    {"rule": "AI 工具使用声明置于参考文献之前，使用官方定句", "source": "CUMCM 2026 AI 工具使用管理办法（定句）", "level": "must"},
+    {"rule": "附录须含支撑材料文件列表与全部完整可运行源码", "source": "CUMCM 2026 修订稿", "level": "must"},
+    {"rule": "使用 AI 工具须生成『AI 工具使用详情.pdf』并放入支撑材料 ZIP（工具/版本、使用目的环节、提示方式与过程、采纳修改核验）", "source": "CUMCM 2026 AI 工具使用管理办法", "level": "must"},
+    {"rule": "纸质版论文附承诺书（第 1 页）与编号专用页（第 2 页），电子版不含", "source": "CUMCM 报名/提交规则", "level": "must"},
+    {"rule": "禁止浏览/搜索/参与交流平台（贴吧、QQ 群、微信群、知乎、小红书、CSDN、GitHub 等）上与赛题相关的讨论，检索只走学术与官方渠道", "source": "CUMCM 竞赛纪律（检索边界）", "level": "must_not"},
+    {"rule": "美赛（MCM/ICM）论文内只允许出现队号，不得出现学校、姓名、指导教师、赛区等身份信息", "source": "MCM/ICM 竞赛规则（匿名要求）", "level": "must_not"},
+    {"rule": "参考文献须真实可核实（可在线核验：DOI/期刊/官方网址）", "source": "CUMCM 竞赛纪律（引用规范）", "level": "must"},
+    {"rule": "有对应结果的『参考文献』与论文引用条数一致，附录源码与提交 ZIP 一致", "source": "CUMCM 提交要求", "level": "must"}
+  ]
+}

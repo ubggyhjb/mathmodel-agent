@@ -33,6 +33,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 # 真实项目基线（T01/T04/T06-T09/T12）需要一份已通过的竞赛项目；
 # 开源环境未提供时这些用例自动 SKIP，其余 fixture 用例照常跑。
 REAL_WS = os.environ.get("MATHMODEL_TEST_WS", "")
+FIXTURE_METHOD = Path(__file__).resolve().parent / "tmp_methodology"
 FIXTURE_TYPST = Path(__file__).resolve().parent / "tmp_trace"
 
 
@@ -188,11 +189,13 @@ def main():
         else:
             results.append(report("T11", "verify_refs 编造文献 FAIL", False, proc))
 
-    # T12 聚合门（离线时 skip refs）
+    # T12 聚合门（离线时 skip refs；v3 新门 methodology/leakage/figure_story 由 T14-T19 单独覆盖，
+    # 待 C 题项目完成 v3 methodology 补全后启用全量聚合基线）
     if need_ws("T12", "run_all_gates 聚合"):
-        extra = ["--skip", "refs"] if args.skip_online else []
+        skip_extra = "refs,methodology,leakage,figure_story" if args.skip_online else "methodology,leakage,figure_story"
         results.append(report("T12", "run_all_gates 聚合", True,
-                              run([SCRIPTS / "run_all_gates.py", "--workspace", ws, "--strict", *extra])))
+                              run([SCRIPTS / "run_all_gates.py", "--workspace", ws, "--strict",
+                                   "--skip", skip_extra])))
 
     # T13 whitespace_qa 大空带页检测（顶部/底部有字但中间空大半页，必须被标偏空）
     with tempfile.TemporaryDirectory() as td:
@@ -207,11 +210,70 @@ def main():
         results.append(report("T13", "whitespace_qa 大空带 FAIL", False,
                               run([SCRIPTS / "whitespace_qa.py", "--pdf", pdf_path, "--strict"])))
 
+    # ---- v3 新门（T14-T19），基于 tmp_methodology fixture 的副本（不污染 fixture） ----
+
+    def method_copy():
+        td = tempfile.TemporaryDirectory()
+        shutil.copytree(FIXTURE_METHOD, td.name, dirs_exist_ok=True)
+        return td, Path(td.name)
+
+    # T14 methodology fixture 基线 PASS
+    td, tws = method_copy()
+    try:
+        results.append(report("T14", "methodology fixture PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+    # T15 methodology 假设词违规（无修饰『相互独立』）FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "paper" / "main.tex").write_text(
+            "各孕妇的检测相互独立。\n\\includegraphics{figures/fig_q1}\n", encoding="utf-8")
+        results.append(report("T15", "methodology 假设词违规 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+    # T16 leakage fixture PASS（scope 齐全且 threshold=inner_cv）
+    td, tws = method_copy()
+    try:
+        results.append(report("T16", "leakage scope 合规 PASS", True,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+    # T17 leakage threshold_selection=outer_test -> FAIL
+    td, tws = method_copy()
+    try:
+        sp = tws / "reports" / "methodology" / "ml_operation_scope.json"
+        import json as _json
+        doc = _json.loads(sp.read_text(encoding="utf-8"))
+        for op in doc["operations"]:
+            if op["operation"] == "threshold_selection":
+                op["allowed_data"] = "outer_test"
+        sp.write_text(_json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        results.append(report("T17", "leakage 阈值用外层测试 FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+    # T18 figure_story fixture PASS
+    td, tws = method_copy()
+    try:
+        results.append(report("T18", "figure_story 登记齐全 PASS", True,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+    # T19 figure_story 缺 manifest -> FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "reports" / "figure_story_manifest.json").unlink()
+        results.append(report("T19", "figure_story 缺 manifest FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""
     print(f"\nRESULT: {len(results) - n_fail}/{len(results)} 通过{suffix}")
     return 1 if n_fail else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

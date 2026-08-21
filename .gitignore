@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.log
 
+
+# 测试 fixture 运行产物
+skills/6verity/tests/tmp_methodology/reports/gates/
