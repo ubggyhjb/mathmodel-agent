@@ -104,3 +104,16 @@
   （primary 深蓝粗线/benchmarks 灰阶/direct labeling）；11 张图 FIGURE_SPEC 登记。
 - 支撑包：SUBMISSION_MANIFEST / warning_ledger / AI_USE_PROVENANCE /
   data_sources 唯一登记源 / README reproduction_tolerance / full 复现级别。
+
+## v4.3 补遗：R/ggplot2 落地（§21/§22）
+
+- **R 4.6.1 已接入**（用户侧安装，E:\R-4.6.1；Rscript 经 PATH/环境变量 RSCRIPT 探测，禁止本机绝对路径）：
+  R/ 目录（theme_mathmodel.R 8pt 主题 + palette_mathmodel.R 语义配色 + save_figure.R 矢量/PNG 输出 +
+  plots/fig_q3_effects.R·fig_q4_roc.R）+ 
+env.lock（R 版本 + 13 包版本，等价恢复）。
+- NIPT 图 7（AFT 森林图）/图 9（ROC）正式渲染器 = **r_ggplot2**（同源 results/*.json 数据、语义层级配色、
+  ggrepel direct labeling）；FIGURE_SPEC renderer=r_ggplot2 + renderer_fallback；无 R 环境 run_all 自动记录
+  fallback（不静默切换）。
+- figure_spec_gate：renderer 契约对**全部**声明图（T90 仍只强制 primary 有 spec；T93/T92 全量）。
+- mathmodel-figure-templates 增 R/ 模板（theme/palette + example_forest/example_roc）。
+- Reviewer C trip3/trip4 复评 PASS（82），15/15 门禁保持。
