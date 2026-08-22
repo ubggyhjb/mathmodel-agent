@@ -407,28 +407,12 @@ def check_model_spec(spec, ws, text, strict, findings):
                            f"的观测机制不一致且无 mechanism_change_rationale——疑似该问沿用旧口径",
                            strict)
 
-    # 4) result JSON 的 model_spec_sha256 校验（results 已生成时必须对齐）
+    # 4) result JSON 的 model_spec_sha256 校验（v4.3：registry 驱动，禁止"部分绑定即可过门"）
     spec_hash = gc.sha256_file(ws / SPEC_REL)
-    res_dir = ws / "results"
-    if res_dir.is_dir():
-        res_jsons = [p for p in sorted(res_dir.glob("*.json"))]
-        with_spec = []
-        for rj in res_jsons:
-            doc = gc.load_json(rj, None)
-            if isinstance(doc, dict) and doc.get("model_spec_sha256"):
-                with_spec.append((rj, doc["model_spec_sha256"]))
-        if res_jsons:
-            if not with_spec:
-                _violation(findings, "model_spec",
-                           f"results/ 已有 {len(res_jsons)} 个 JSON 但均未写 model_spec_sha256（v4 强制：结果必须绑定契约）",
-                           strict)
-            for rj, h in with_spec:
-                if h != spec_hash:
-                    _violation(findings, "model_spec",
-                               f"{rj.name} 的 model_spec_sha256 与当前契约不一致——结果由旧模型定义生成",
-                               strict)
-                else:
-                    findings.append(_ok("model_spec", f"{rj.name} 绑定当前契约 ({h[:12]})"))
+    check_result_binding(ws, spec, spec_hash, findings, strict)
+    # 4b) v4.3：spec v2 语义一致性（distribution/feature_set_id/variable ID/active figure）
+    if isinstance(spec, dict) and int(spec.get("schema_version", 1) or 1) >= 2:
+        check_spec_v2_semantics(ws, spec, findings, strict)
 
     # 5) 论文声明消费契约 + contract_rev 失效传播（任务书 二十四条）
     if "FINAL_MODEL_SPEC" not in text and "final_model_spec" not in text.lower():
@@ -443,6 +427,212 @@ def check_model_spec(spec, ws, text, strict, findings):
                        strict)
         else:
             findings.append(_ok("model_spec", f"论文注明契约版本 rev={max(revs)}，与当前契约一致"))
+
+
+REGISTRY_ROLES = {"paper_authority", "model_output", "figure_source",
+                  "external_registry", "diagnostic", "support"}
+
+
+def _spec_hash_of(doc):
+    """结果 JSON 的 model_spec_sha256 取值：顶层（v4 旧口径）与 _meta（v4.3 §15）双口径。"""
+    if not isinstance(doc, dict):
+        return None
+    h = doc.get("model_spec_sha256")
+    if h:
+        return h
+    meta = doc.get("_meta")
+    if isinstance(meta, dict):
+        return meta.get("model_spec_sha256")
+    return None
+
+
+def check_result_binding(ws, spec, spec_hash, findings, strict):
+    """v4.3（任务书 P0 第 4 节 / T70）：model_spec_sha256 绑定由 results/RESULT_REGISTRY.json 驱动——
+    所有 requires_model_spec_binding=true 的结果必须逐个绑定当前 spec hash；
+    不存在"目录中只要有一部分 JSON 带 hash 就通过"的启发式判断。
+    registry 缺失时退回旧启发式并 WARN（正式项目要求登记全部结果文件）。"""
+    res_dir = ws / "results"
+    if not res_dir.is_dir():
+        return
+    res_jsons = sorted(p for p in res_dir.glob("*.json") if p.name != "RESULT_REGISTRY.json")
+    reg_path = res_dir / "RESULT_REGISTRY.json"
+    registry = gc.load_json(reg_path, None)
+    if not isinstance(registry, dict) or not isinstance(registry.get("artifacts"), list):
+        with_spec = []
+        for rj in res_jsons:
+            doc = gc.load_json(rj, None)
+            if _spec_hash_of(doc) is not None:
+                with_spec.append((rj, _spec_hash_of(doc)))
+        if res_jsons and not with_spec:
+            _violation(findings, "model_spec",
+                       f"results/ 已有 {len(res_jsons)} 个 JSON 但均未写 model_spec_sha256，"
+                       f"且缺 results/RESULT_REGISTRY.json（v4 强制：结果必须绑定契约）",
+                       strict)
+        for rj, h in with_spec:
+            if h != spec_hash:
+                _violation(findings, "model_spec",
+                           f"{rj.name} 的 model_spec_sha256 与当前契约不一致——结果由旧模型定义生成",
+                           strict)
+        findings.append(_warn("model_spec",
+                              "results/RESULT_REGISTRY.json 缺失：绑定检查退回启发式（仅检测带 hash 文件），"
+                              "建议登记全部结果文件并标记 authority 角色"))
+        return
+    arts = registry["artifacts"]
+    seen = set()
+    for i, a in enumerate(arts):
+        rel = str(a.get("file", ""))
+        role = str(a.get("role", ""))
+        if not rel:
+            _violation(findings, "model_spec", f"RESULT_REGISTRY artifact[{i}] 缺 file 字段", strict)
+            continue
+        seen.add(rel)
+        rp = ws / rel
+        if not rp.is_file():
+            _violation(findings, "model_spec", f"REGISTRY 登记文件不存在：{rel}（dangling 条目）", strict)
+            continue
+        if role and role not in REGISTRY_ROLES:
+            findings.append(_warn("model_spec",
+                                  f"REGISTRY 条目 {rel} 的 role={role} 不在已知角色集 {sorted(REGISTRY_ROLES)}"))
+        requires = bool(a.get("requires_model_spec_binding"))
+        doc = gc.load_json(rp, None)
+        has = _spec_hash_of(doc) is not None
+        if requires:
+            if not has:
+                _violation(findings, "model_spec",
+                           f"{rel}（role={role}）要求绑定当前契约但未写 model_spec_sha256——部分绑定不允许",
+                           strict)
+            elif _spec_hash_of(doc) != spec_hash:
+                _violation(findings, "model_spec",
+                           f"{rel} 的 model_spec_sha256 与当前契约不一致——结果由旧模型定义生成",
+                           strict)
+            else:
+                findings.append(_ok("model_spec", f"{rel} 绑定当前契约 ({spec_hash[:12]})"))
+        elif has:
+            findings.append(_warn("model_spec",
+                                  f"{rel} 写有 model_spec_sha256 但 registry 标记 requires_model_spec_binding=false——声明矛盾"))
+    names = {rel.split("/")[-1] for rel in seen}
+    for rj in res_jsons:
+        if rj.name in names:
+            continue
+        doc = gc.load_json(rj, None)
+        if _spec_hash_of(doc) is not None:
+            _violation(findings, "model_spec",
+                       f"{rj.name} 写有 model_spec_sha256 但未在 RESULT_REGISTRY 登记——绑定无法判定角色",
+                       strict)
+        else:
+            findings.append(_warn("model_spec",
+                                  f"results/{rj.name} 未在 RESULT_REGISTRY 登记（无法判定是否 paper-authority）"))
+
+
+def check_spec_v2_semantics(ws, spec, findings, strict):
+    """v4.3（P0-01~P0-04 / T71-T74）：spec v2 语义一致性——
+    契约字段 ↔ 结果 _meta ↔ variables.json 登记 ↔ figure_manifest 四方对账。
+    只检查 schema_version>=2 的契约；v1 契约保持旧规则（向后兼容）。"""
+    problems = spec.get("problems") or []
+    if not problems:
+        return
+    variables = gc.load_json(ws / "reports" / "variables.json", None)
+    if not isinstance(variables, dict):
+        variables = None
+    manifest = gc.load_json(ws / "figures" / "figure_manifest.json", None)
+    if not isinstance(manifest, list):
+        manifest = None
+    for p in problems:
+        pid = str(p.get("problem_id", "?"))
+        model = p.get("model") or {}
+        feats = p.get("features") or {}
+        # (a) 变量 ID 登记与可用性（T73）
+        for v in feats.get("included") or []:
+            vid = str(v.get("id", "")) if isinstance(v, dict) else str(v)
+            if not vid:
+                continue
+            if variables is None:
+                _violation(findings, "model_spec",
+                           f"问题 {pid} features.included 引用变量 {vid}，但 reports/variables.json 缺失——"
+                           f"变量必须统一登记 variable ID", strict)
+            elif vid not in variables:
+                _violation(findings, "model_spec",
+                           f"问题 {pid} features.included 引用未登记变量 {vid}（variables.json 无此 ID）", strict)
+            elif str((variables.get(vid) or {}).get("availability", "available")) == "unavailable":
+                _violation(findings, "model_spec",
+                           f"问题 {pid} primary feature set 引用 availability=unavailable 的变量 {vid}", strict)
+        for v in feats.get("excluded") or []:
+            vid = str(v.get("id", "")) if isinstance(v, dict) else str(v)
+            if not vid:
+                continue
+            if variables is not None and vid not in variables:
+                findings.append(_warn("model_spec",
+                                      f"问题 {pid} features.excluded 引用未登记变量 {vid}（建议登记并说明排除理由）"))
+        # (b) active figure conformance（T74）
+        fig_ids = [str(f) for f in (p.get("figure_ids") or []) if str(f).strip()]
+        if fig_ids and manifest is None:
+            _violation(findings, "model_spec",
+                       f"问题 {pid} 声明 figure_ids {fig_ids}，但 figures/figure_manifest.json 缺失", strict)
+        elif fig_ids:
+            ids = {str(m.get("id")): m for m in manifest if isinstance(m, dict)}
+            for fid in fig_ids:
+                m = ids.get(fid)
+                if m is None:
+                    _violation(findings, "model_spec",
+                               f"问题 {pid} figure_ids 引用不存在于 figure_manifest 的图 {fid}（已删除/未登记）",
+                               strict)
+                    continue
+                status = str(m.get("status", "")).lower()
+                if status in ("deleted", "superseded"):
+                    _violation(findings, "model_spec",
+                               f"问题 {pid} figure_ids 引用 status={status} 的图 {fid}", strict)
+                if any(str(s) == fid for s in (m.get("supersedes") or [])):
+                    findings.append(_warn("model_spec",
+                                          f"图 {fid} 被 {m.get('id')} supersedes——确认真实正文是否仍引用该图"))
+        # (c) primary result 无 active figure / 未声明 -> WARN
+        if (p.get("result_keys") or []) and not fig_ids and not p.get("no_figure_required"):
+            findings.append(_warn("model_spec",
+                                  f"问题 {pid} 有 result_keys 但无 figure_ids 且未声明 no_figure_required——"
+                                  f"primary result 建议至少一个 active figure"))
+    # (d) 结果 _meta 语义一致（T71/T72）：对 registry 中 requires 绑定且 hash 正确的文件按问题对账
+    _check_result_metadata(ws, spec, findings, strict)
+
+
+def _check_result_metadata(ws, spec, findings, strict):
+    problems = {str(p.get("problem_id")): p for p in (spec.get("problems") or [])}
+    registry = gc.load_json(ws / "results" / "RESULT_REGISTRY.json", None)
+    if not isinstance(registry, dict):
+        return  # 无 registry 时绑定检查已降级；语义对账随之不可判定
+    spec_hash = gc.sha256_file(ws / SPEC_REL)
+    for a in registry.get("artifacts") or []:
+        if not bool(a.get("requires_model_spec_binding")):
+            continue
+        rp = ws / str(a.get("file", ""))
+        doc = gc.load_json(rp, None)
+        if not isinstance(doc, dict) or _spec_hash_of(doc) != spec_hash:
+            continue  # 缺失/不匹配已在 check_result_binding 报
+        pid = str(a.get("problem_id", "") or "")
+        div = str((doc.get("_meta") or {}).get("problem_id", "") or "")
+        if pid and div and pid != div:
+            _violation(findings, "model_spec",
+                       f"{a.get('file')} _meta.problem_id={div} 与 REGISTRY 登记 {pid} 不一致", strict)
+        key = pid or div
+        p = problems.get(key)
+        if p is None:
+            continue
+        meta = doc.get("_meta") or {}
+        model = p.get("model") or {}
+        feats = p.get("features") or {}
+        fam = str(model.get("family", "") or "")
+        dist = str(model.get("distribution", "") or "")
+        fsid = str(feats.get("feature_set_id", "") or "")
+        if fam and str(meta.get("model_family", "") or "") != fam:
+            _violation(findings, "model_spec",
+                       f"{a.get('file')} _meta.model_family={meta.get('model_family')} 与契约 {key} "
+                       f"model.family={fam} 不一致", strict)
+        if dist and str(meta.get("model_distribution", "") or "") != dist:
+            _violation(findings, "model_spec",
+                       f"{a.get('file')} _meta.model_distribution={meta.get('model_distribution')} 与契约 {key} "
+                       f"model.distribution={dist} 不一致", strict)
+        if fsid and str(meta.get("feature_set_id", "") or "") != fsid:
+            _violation(findings, "model_spec",
+                       f"{a.get('file')} _meta.feature_set_id={meta.get('feature_set_id')} 与契约 {key} "
+                       f"features.feature_set_id={fsid} 不一致", strict)
 
 
 def conditional_required_inputs(dgp, spec, mdir, strict, findings):

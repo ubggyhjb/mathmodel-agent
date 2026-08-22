@@ -977,6 +977,138 @@ def main():
         results.append(report("T64", "硬编码 fallback FAIL", False,
                               run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
 
+    # ============ v4.3 contract semantics regression（T70-T74，任务书 v4.3 §4/§14/§15） ============
+    import hashlib as _hl
+
+    def _v2_spec(tws, dist="weibull", fsid="Q1.feat.v1", fig_ids=("fig1",), rev="Q1"):
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        spec["schema_version"] = 2
+        spec["contract_rev"] = int(spec.get("contract_rev", 1) or 1) + 1
+        p = dict(spec["problems"][0])
+        p["problem_id"] = rev
+        p["model"] = {"family": "aft", "distribution": dist,
+                      "parameterization": "logT = gamma0 + gamma1*BMI + sigma*W"}
+        p["features"] = {"feature_set_id": fsid, "included": [{"id": "bmi", "role": "covariate"}],
+                         "excluded": []}
+        p["figure_ids"] = list(fig_ids)
+        p["result_keys"] = ["results/p0.json#a"]
+        spec["problems"] = [p]
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        return spec
+
+    def _vars(tws):
+        json_write(tws / "reports" / "variables.json",
+                   {"bmi": {"storage_unit": "kg_m2", "availability": "available"},
+                    "age": {"storage_unit": "year"}})
+
+    def _meta_ok(spec_hash, dist="weibull", fsid="Q1.feat.v1", pid="Q1"):
+        return {"_meta": {"problem_id": pid, "role": "paper_authority",
+                          "model_spec_sha256": spec_hash, "contract_rev": 2,
+                          "model_family": "aft", "model_distribution": dist,
+                          "feature_set_id": fsid}}
+
+    # T70 部分绑定：15 个 paper-authority 结果仅 5 个带正确 hash -> FAIL
+    td, tws = method_copy()
+    try:
+        _v2_spec(tws)
+        _vars(tws)
+        (tws / "results").mkdir(exist_ok=True)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        arts = []
+        for i in range(15):
+            fn = f"p{i}.json"
+            doc = {"a": i}
+            if i < 5:
+                doc.update(_meta_ok(spec_hash))
+            json_write(tws / "results" / fn, doc)
+            arts.append({"file": f"results/{fn}", "role": "paper_authority",
+                         "problem_id": "Q1", "requires_model_spec_binding": True})
+        json_write(tws / "results" / "RESULT_REGISTRY.json", {"schema_version": 1, "artifacts": arts})
+        results.append(report("T70", "结果部分绑定契约 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T70.good 全部绑定 + _meta 一致 -> PASS
+    td, tws = method_copy()
+    try:
+        _v2_spec(tws)
+        _vars(tws)
+        (tws / "results").mkdir(exist_ok=True)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        arts = []
+        for i in range(3):
+            fn = f"p{i}.json"
+            json_write(tws / "results" / fn, {"a": i, **_meta_ok(spec_hash)})
+            arts.append({"file": f"results/{fn}", "role": "paper_authority",
+                         "problem_id": "Q1", "requires_model_spec_binding": True})
+        json_write(tws / "results" / "RESULT_REGISTRY.json", {"schema_version": 1, "artifacts": arts})
+        results.append(report("T70.good", "全量绑定+语义一致 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T71 spec distribution=weibull vs result _meta lognormal -> FAIL
+    td, tws = method_copy()
+    try:
+        _v2_spec(tws, dist="weibull")
+        _vars(tws)
+        (tws / "results").mkdir(exist_ok=True)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        json_write(tws / "results" / "p0.json", {"a": 1, **_meta_ok(spec_hash, dist="lognormal")})
+        json_write(tws / "results" / "RESULT_REGISTRY.json",
+                   {"artifacts": [{"file": "results/p0.json", "role": "paper_authority",
+                                   "problem_id": "Q1", "requires_model_spec_binding": True}]})
+        results.append(report("T71", "spec/result 分布元数据矛盾 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T72 spec feature_set_id vs result _meta 不一致 -> FAIL
+    td, tws = method_copy()
+    try:
+        _v2_spec(tws, fsid="Q1.feat.v1")
+        _vars(tws)
+        (tws / "results").mkdir(exist_ok=True)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        json_write(tws / "results" / "p0.json", {"a": 1, **_meta_ok(spec_hash, fsid="Q1.feat.OLD")})
+        json_write(tws / "results" / "RESULT_REGISTRY.json",
+                   {"artifacts": [{"file": "results/p0.json", "role": "paper_authority",
+                                   "problem_id": "Q1", "requires_model_spec_binding": True}]})
+        results.append(report("T72", "spec/result feature_set 元数据矛盾 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T73 spec included 引用 availability=unavailable 变量 -> FAIL
+    td, tws = method_copy()
+    try:
+        _v2_spec(tws)
+        json_write(tws / "reports" / "variables.json",
+                   {"bmi": {"storage_unit": "kg_m2", "availability": "unavailable"}})
+        results.append(report("T73", "spec 引用 unavailable 变量 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T74 spec figure_ids 指向 deleted/不存在图 -> FAIL
+    for name, fig_ids, extra_manifest in (
+            ("T74", ("fig_del",), {"id": "fig_del", "status": "deleted"}),
+            ("T74.b", ("ghost_fig",), None)):
+        td, tws = method_copy()
+        try:
+            _v2_spec(tws, fig_ids=fig_ids)
+            _vars(tws)
+            if extra_manifest:
+                man = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+                man.append(extra_manifest)
+                json_write(tws / "figures" / "figure_manifest.json", man)
+            results.append(report(name, "spec 引用失效图 FAIL", False,
+                                  run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            td.cleanup()
+
+
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""
     print(f"\nRESULT: {len(results) - n_fail}/{len(results)} 通过{suffix}")
