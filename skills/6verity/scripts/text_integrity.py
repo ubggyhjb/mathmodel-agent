@@ -296,7 +296,10 @@ def scan_keywords(ws: Path, strict: bool):
     """关键词程序化检查。支持两种位置：
       A) `关键词：<词…>`（前缀行）；
       B) `\abstractcn{…}{<关键词>}` 等宏的第二参数（CUMCM 模板写法）。
-    规则：3-8 个词；无分隔符（；|;|，）且 >=3 词 -> FAIL；2 词无分隔符 -> WARN。
+    v4.3（§29A.2）：分隔符策略 = 字符分隔符（；/;，）或 LaTeX 固定水平间距
+    （\\quad/\\enspace/\\hspace）或普通空格均合法；中文关键词默认固定间距（\\quad），
+    官方模板明确要求分号时例外——不允许单独因为"没有分号"判 FAIL。
+    规则：3-8 个词；无任何分隔（含空白）且词数 >=3 -> FAIL；2 词无分隔 -> WARN。
     """
     findings = []
     paper = ws / "paper"
@@ -304,6 +307,7 @@ def scan_keywords(ws: Path, strict: bool):
         return findings
     kw_re = re.compile(r"关键词\s*[:：]\s*([^\n]*)")
     macro_re = re.compile(r"\\abstractcn\s*\{.*?\}\s*\{([\s\S]*?)\}", re.S)
+    LATEX_SPACE_RE = re.compile(r"\\quad|\\enspace|\\hspace|\\hskip|~")
     for p in sorted(paper.rglob("*")):
         if p.suffix.lower() not in (".tex", ".typ"):
             continue
@@ -321,6 +325,7 @@ def scan_keywords(ws: Path, strict: bool):
             raw_lines.append(m.group(1))
         seen = set()
         for raw in raw_lines:
+            raw_has_latex_space = bool(LATEX_SPACE_RE.search(_strip_comments(raw)))
             line = _clean_kw_line(raw)
             if not re.search(r"[\u4e00-\u9fffA-Za-z]", line):
                 continue  # 宏定义/模板说明等无实际词的内容
@@ -328,8 +333,10 @@ def scan_keywords(ws: Path, strict: bool):
                 continue
             seen.add(line)
             seps = [s for s in KEYWORD_SEPARATORS if s in line]
-            if seps:
-                words = [w for w in re.split(r"[；;，,]+", line) if w.strip()]
+            has_latex_space = bool(raw_has_latex_space) or bool(LATEX_SPACE_RE.search(line))
+            if seps or has_latex_space:
+                words = [w for w in re.split(r"[；;，,]+|\\quad|\\enspace|\\hspace\{[^}]*\}|\\hskip[^ ]*|~|\s+", line)
+                         if w.strip()]
             else:
                 words = [w for w in line.split() if w.strip()]
             n = len(words)
@@ -337,13 +344,14 @@ def scan_keywords(ws: Path, strict: bool):
                 findings.append({"level": "FAIL" if strict else "WARN", "check": "keyword_count",
                                  "message": f"{p.relative_to(ws)}: 关键词 {n} 个，超出 "
                                             f"{KEYWORDS_MIN}-{KEYWORDS_MAX} 范围：{line[:60]}"})
-            if not seps and n >= 3:
+            if not seps and not has_latex_space and n >= 3:
                 findings.append({"level": "FAIL" if strict else "WARN", "check": "keyword_separator",
-                                 "message": f"{p.relative_to(ws)}: 关键词未用分隔符（；/;，）分隔: "
-                                            f"{line[:60]}（官方模板默认 ； 分隔）"})
+                                 "message": f"{p.relative_to(ws)}: 关键词既无分隔符也无固定间距 "
+                                            f"（；/;， 或 \\quad）且 {n} 词: "
+                                            f"{line[:60]}（v4.3 默认固定间距 \\quad，模板要求分号时例外）"})
             elif not seps and n == 2:
                 findings.append({"level": "WARN", "check": "keyword_separator",
-                                 "message": f"{p.relative_to(ws)}: 关键词 2 个且无分隔符，建议改用 ； 分隔: "
+                                 "message": f"{p.relative_to(ws)}: 关键词 2 个且无分隔，建议用 \\quad 或 ； 分隔: "
                                             f"{line[:60]}"})
     return findings
 

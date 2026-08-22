@@ -376,6 +376,23 @@ def main():
         results.append(report("T25", "关键词无分隔 FAIL", False,
                               run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
 
+    # T25.quad 关键词用 \quad 固定间距（v4.3 默认）-> PASS；全角分号 -> PASS
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "\\abstractcn{摘要}{NIPT\\quad 区间删失\\quad 检测时点优化\\quad 生存分析\\quad "
+            "代价敏感分类\\quad 非整倍体判定}\n", encoding="utf-8")
+        results.append(report("T25.quad", "关键词固定间距 PASS", True,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            "\\abstractcn{摘要}{NIPT；区间删失；检测时点优化；生存分析}\n", encoding="utf-8")
+        results.append(report("T25.semi", "关键词分号分隔 PASS", True,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
     # T26 caption 与 manifest 不一致 -> figure_story FAIL
     td, tws = method_copy()
     try:
