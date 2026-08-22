@@ -239,10 +239,23 @@ def blind_closure_errors(ws, doc):
             seats_final[seat] = s
 
     errors, warnings = [], []
-    missing = [x for x in ("seat1_overall", "seat2_correctness", "seat3_innovation")
-               if x not in seats_final]
+    # v4.3（§29B.1/T103）：席位名单以 workflow_spec.yaml final_review 为唯一事实源——
+    # 新命名 seatA_modeling/seatB_statml/seatC_visual；旧命名兼容（历史项目不破坏）。
+    SEATS_NEW = ("seatA_modeling", "seatB_statml", "seatC_visual")
+    SEATS_OLD = ("seat1_overall", "seat2_correctness", "seat3_innovation")
+    if all(x in seats_final for x in SEATS_NEW):
+        missing = [x for x in SEATS_NEW if x not in seats_final]
+        warnings.append("三席命名已迁移为 seatA/B/C（与 workflow_spec final_review 对齐）")
+    elif all(x in seats_final for x in SEATS_OLD):
+        missing = []
+        warnings.append("blind_scores 仍用旧席位名（seat1/2/3_innovation）：建议迁移为 "
+                        "seatA_modeling/seatB_statml/seatC_visual 并与 workflow_spec 一致——"
+                        "旧名缺少独立视觉席（§29B.1）")
+    else:
+        missing = [x for x in SEATS_NEW if x not in seats_final] + \
+                  [x for x in SEATS_OLD if x not in seats_final]
     if missing:
-        errors.append(f"三席盲评缺席位: {missing}")
+        errors.append(f"三席盲评缺席位（新名+旧名均不齐全）: {missing}")
     open_map = {}
     for i in doc.get("open_issues", []):
         open_map[str(i.get("id"))] = i

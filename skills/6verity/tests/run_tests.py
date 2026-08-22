@@ -1457,6 +1457,117 @@ def main():
             _td.cleanup()
     except ImportError:
         print("[SKIP] T95-T99 缺少 PyMuPDF")
+    try:
+        import fitz as _fitz
+
+        def _visual_ws(pdf_pages=3, pr=None, vr=None):
+            _td = tempfile.TemporaryDirectory()
+            tws = Path(_td.name)
+            (tws / "paper").mkdir(parents=True)
+            (tws / "reports").mkdir()
+            with _fitz.open() as _d:
+                for _ in range(pdf_pages):
+                    _d.new_page(width=595, height=842)
+                _d.save(str(tws / "paper" / "main.pdf"))
+            sha = _hl.sha256((tws / "paper" / "main.pdf").read_bytes()).hexdigest()
+            json_write(tws / "reports" / "visual_review.json",
+                       vr or {"reviewed_pdf_sha256": sha, "contact_sheet_pages": pdf_pages})
+            if pr is not None:
+                json_write(tws / "reports" / "page_visual_review.json", pr)
+            return _td, tws, sha
+
+        def _pr_ok(sha, npages, findings=None):
+            return {"reviewed_pdf_sha256": sha, "reviewed_pages": list(range(1, npages + 1)),
+                    "expected_pages": npages, "coverage_complete": True,
+                    "page_findings": findings or [], "verdict": "PASS"}
+
+        # T100 SHA 对齐但缺 page_visual_review.json -> FAIL
+        _td, tws, _sha = _visual_ws(3)
+        try:
+            results.append(report("T100", "评审材料缺逐页裁决 FAIL", False,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+
+        # T100.good 完整视觉执行闭环 -> PASS
+        _td, tws, sha = _visual_ws(3)
+        try:
+            json_write(tws / "reports" / "page_visual_review.json", _pr_ok(sha, 3))
+            results.append(report("T100.good", "视觉执行闭环 PASS", True,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+
+        # T101 reviewed_pages 未覆盖 expected_pages -> FAIL
+        _td, tws, sha = _visual_ws(5)
+        try:
+            pr = _pr_ok(sha, 5)
+            pr["reviewed_pages"] = [1, 2, 3]
+            json_write(tws / "reports" / "page_visual_review.json", pr)
+            results.append(report("T101", "逐页覆盖缺页 FAIL", False,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+
+        # T102 未关闭 BLOCKER（veto 不被总分平均）-> FAIL
+        _td, tws, sha = _visual_ws(3)
+        try:
+            pr = _pr_ok(sha, 3, findings=[{"page": 2, "type": "orphan_text_spill",
+                                           "severity": "BLOCKER", "evidence": "关键词尾部溢出"}])
+            json_write(tws / "reports" / "page_visual_review.json", pr)
+            results.append(report("T102", "未关闭视觉 BLOCKER 否决 FAIL", False,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+
+        # T102.good BLOCKER 带 resolution -> PASS
+        _td, tws, sha = _visual_ws(3)
+        try:
+            pr = _pr_ok(sha, 3, findings=[{"page": 2, "type": "orphan_text_spill",
+                                           "severity": "BLOCKER", "evidence": "...",
+                                           "resolution": "关键词压缩回第 1 页（sections/0_abstract.tex L42）",
+                                           "post_fix_review": {"reviewed_pdf_sha256": sha}}])
+            json_write(tws / "reports" / "page_visual_review.json", pr)
+            results.append(report("T102.good", "BLOCKER 已关闭 PASS", True,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+
+        # T103 6verity 执行席位用"创新席"且无视觉席 -> roster drift FAIL
+        repo = Path(tempfile.mkdtemp())
+        try:
+            shutil.copy2(Path(__file__).resolve().parents[3] / "workflow_spec.yaml",
+                         repo / "workflow_spec.yaml")
+            (repo / "skills" / "6verity").mkdir(parents=True, exist_ok=True)
+            (repo / "skills" / "6verity" / "SKILL.md").write_text(
+                "# 6verity\n\n三席盲评：①通审席 ②正确性与可复现席 ③创新与决策效用席（seat3_innovation）。\n",
+                encoding="utf-8")
+            _td, tws, sha = _visual_ws(3)
+            try:
+                json_write(tws / "reports" / "visual_review.json", {"reviewed_pdf_sha256": sha})
+                json_write(tws / "reports" / "page_visual_review.json", _pr_ok(sha, 3))
+                results.append(report("T103", "roster 视觉席漂移 FAIL", False,
+                                      run([SCRIPTS / "visual_review_gate.py", "--workspace", tws,
+                                           "--root", str(repo), "--strict"])))
+            finally:
+                _td.cleanup()
+        finally:
+            import shutil as _sh
+            _sh.rmtree(repo, ignore_errors=True)
+
+        # T103.good 真实仓库 roster 一致 -> PASS
+        _td, tws, sha = _visual_ws(3)
+        try:
+            json_write(tws / "reports" / "visual_review.json", {"reviewed_pdf_sha256": sha})
+            json_write(tws / "reports" / "page_visual_review.json", _pr_ok(sha, 3))
+            results.append(report("T103.good", "roster 与 workflow_spec 一致 PASS", True,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws,
+                                       "--root", str(Path(__file__).resolve().parents[3]),
+                                       "--strict"])))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T100-T103 缺少 PyMuPDF")
 
 
     n_fail = sum(1 for ok in results if not ok)

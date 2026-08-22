@@ -96,6 +96,10 @@ def gate_specs(ws: Path, strict: bool, skip: set):
         # v4.3（§12/T65-T69）：Brainstorm 契约门——候选契约/淘汰隔离/无结论词
         ("idea_contracts", scripts / "idea_gate.py",
          ["--workspace", str(ws), *strict_args], "reports/gates/idea_gate.json"),
+        # v4.3（§29B/T100-T103）：视觉执行闭环门——SHA/覆盖/veto + roster drift
+        ("visual_review_gate", scripts / "visual_review_gate.py",
+         ["--workspace", str(ws), "--root", str(wfs.repo_root(Path(__file__).resolve().parent)),
+          *strict_args], "reports/gates/visual_review_gate.json"),
         # v4.2（9.1/9.2）：verification 强制 substage——部署效用审计 + 提交包审计
         ("deployment_utility", scripts / "deployment_utility.py",
          ["--workspace", str(ws), *strict_args], "reports/deployment_utility.json"),
@@ -148,7 +152,8 @@ def semantic_problems(name, result, ws):
     elif name == "verify_refs":
         if doc is None:
             problems.append("verify_refs 未产出 JSON 报告")
-    elif name in ("methodology", "leakage", "figure_story", "text_integrity", "idea_contracts"):
+    elif name in ("methodology", "leakage", "figure_story", "text_integrity", "idea_contracts",
+                  "visual_review_gate"):
         if doc is None:
             problems.append(f"{name} 未产出 JSON 报告")
     return problems
