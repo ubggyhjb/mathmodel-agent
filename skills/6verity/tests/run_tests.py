@@ -711,6 +711,14 @@ def main():
                 z.writestr(rel, content if isinstance(content, str) else content.read_bytes())
         return zpath
 
+    def _finalize_manifest(tws: Path):
+        """v4.4：为 fixture ZIP 生成 payload manifest + sidecar（build_manifest 语义）。"""
+        sys.path.insert(0, str(SCRIPTS))
+        import submission_package_gate as _spg
+        zpath = tws / "提交" / "支撑材料.zip"
+        _spg.build_manifest(zpath, tws / "repro" / "SUBMISSION_MANIFEST.json")
+        return zpath
+
     # T46 小写 u/l 区间似然反向表达（S(u)-S(l) / S(u_i^-)-S(l_i) / S(r)-S(l)）-> text_integrity FAIL
     for i, expr in enumerate([
         r"\log[S(u_i)-S(l_i)]",
@@ -1176,7 +1184,9 @@ def main():
                         "candidate_ids": ["A", "B"], "frozen_at": "2020-01-01T00:00:00+08:00",
                         "before_result_artifacts": ["results/p0.json"],
                         "selection_rule": "pre_specified_primary", "selected": "B",
-                        "rejected": ["A"], "exceptions": []})
+                        "rejected": ["A"], "exceptions": [],
+                        "evidence_type": "prospective",
+                        "evidence_refs": ["commit:abc123", "session_event:reasoning_log"]})
         results.append(report("T75.good", "预指定时序可证明 PASS", True,
                               run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
     finally:
@@ -1379,6 +1389,9 @@ def main():
              "failure_conditions": ["收敛失败"], "complexity": "high", "interpretability": "low",
              "status": "candidate"},
         ]
+        cands.append({"idea_id": "Q1-I99", "question_id": "Q1", "method_family": "exact_event_ols",
+                      "core_hypothesis": "x", "required_assumptions": ["a"],
+                      "failure_conditions": ["f"], "status": "rejected"})
         if with_i10:
             cands.append({"idea_id": "Q1-I10", "question_id": "Q1", "method_family": "exact_event_ols",
                           "tier": "recommended_solution", "core_hypothesis": "精确事件回归",
@@ -1558,7 +1571,10 @@ def main():
         def _pr_ok(sha, npages, findings=None):
             return {"reviewed_pdf_sha256": sha, "reviewed_pages": list(range(1, npages + 1)),
                     "expected_pages": npages, "coverage_complete": True,
-                    "page_findings": findings or [], "verdict": "PASS"}
+                    "page_findings": findings or [],
+                    "page_records": [{"page": i, "asset_sha256": None, "verdict": "OK",
+                                      "checks": [], "issues": []} for i in range(1, npages + 1)],
+                    "verdict": "PASS"}
 
         # T100 SHA 对齐但缺 page_visual_review.json -> FAIL
         _td, tws, _sha = _visual_ws(3)
@@ -1604,8 +1620,11 @@ def main():
         try:
             pr = _pr_ok(sha, 3, findings=[{"page": 2, "type": "orphan_text_spill",
                                            "severity": "BLOCKER", "evidence": "...",
-                                           "resolution": "关键词压缩回第 1 页（sections/0_abstract.tex L42）",
-                                           "post_fix_review": {"reviewed_pdf_sha256": sha}}])
+                                           "resolution": {"status": "fixed_and_rereviewed",
+                                                          "fixed_pdf_sha256": sha,
+                                                          "review_trip": 2,
+                                                          "reviewed_at": "2026-01-01T00:00:00+08:00",
+                                                          "evidence_pages": [2]}}])
             json_write(tws / "reports" / "page_visual_review.json", pr)
             results.append(report("T102.good", "BLOCKER 已关闭 PASS", True,
                                   run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
@@ -1731,7 +1750,8 @@ def main():
 
     # ============ v4.3 scientific figure system regression（T90-T94，任务书 v4.3 §25-27） ============
 
-    def _fig_spec_ws(manifest_pri="primary", spec=None, with_code=None):
+    def _fig_spec_ws(manifest_pri="primary", spec=None, with_code=None,
+                     with_claim_registry=False, with_render_prov=None):
         _td = tempfile.TemporaryDirectory()
         tws = Path(_td.name)
         (tws / "figures" / "specs").mkdir(parents=True)
@@ -1743,6 +1763,16 @@ def main():
         if with_code is not None:
             (tws / "code").mkdir(exist_ok=True)
             (tws / "code" / "make_figures.py").write_text(with_code, encoding="utf-8")
+        if with_claim_registry:
+            (tws / "repro").mkdir(parents=True, exist_ok=True)
+            json_write(tws / "repro" / "CLAIM_PROVENANCE.json",
+                       {"schema_version": 2, "claims": [{
+                           "claim_id": (spec or {}).get("claim_id", "Q1.PRIMARY"),
+                           "figure_id": "fig_q1", "result": {"file": None, "key": None}}]})
+        if with_render_prov is not None:
+            (tws / "repro").mkdir(parents=True, exist_ok=True)
+            json_write(tws / "repro" / "RENDER_PROVENANCE.json",
+                       {"schema_version": 1, "entries": [with_render_prov]})
         return _td, tws
 
     _SPEC_OK = {"figure_id": "fig_q1", "claim_id": "Q1.PRIMARY", "figure_role": "primary",
@@ -1761,7 +1791,7 @@ def main():
         _td.cleanup()
 
     # T90.good 完整 FIGURE_SPEC -> PASS
-    _td, tws = _fig_spec_ws(spec=_SPEC_OK)
+    _td, tws = _fig_spec_ws(spec=_SPEC_OK, with_claim_registry=True)
     try:
         results.append(report("T90.good", "FIGURE_SPEC 齐全 PASS", True,
                               run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
@@ -1769,7 +1799,7 @@ def main():
         _td.cleanup()
 
     # T92 primary/comparators 等权重彩色 -> WARN（exit 0，report 断言）
-    _td, tws = _fig_spec_ws()
+    _td, tws = _fig_spec_ws(with_claim_registry=True)
     try:
         spec = dict(_SPEC_OK)
         spec["visual_encoding"] = {"primary": "blue", "comparators": ["orange", "green"],
@@ -1795,8 +1825,19 @@ def main():
     finally:
         _td.cleanup()
 
-    # T93.good 有 renv.lock -> PASS
-    _td, tws = _fig_spec_ws()
+    # T93.good 有 renv.lock + RENDER_PROVENANCE -> PASS
+    _td, tws = _fig_spec_ws(with_claim_registry=True,
+                            with_render_prov={"figure_id": "fig_q1",
+                                              "renderer_declared": "r_ggplot2",
+                                              "renderer_actual": "r_ggplot2",
+                                              "fallback_used": False,
+                                              "fallback_reason": None,
+                                              "script": "R/plots/fig_q1.R",
+                                              "script_sha256": "a" * 64,
+                                              "source_hashes": [],
+                                              "output_pdf_sha256": "b" * 64,
+                                              "environment_lock_sha256": "c" * 64,
+                                              "generated_at": "2026-01-01T00:00:00+08:00"})
     try:
         spec = dict(_SPEC_OK)
         spec["renderer"] = "r_ggplot2"
@@ -1849,8 +1890,14 @@ def main():
         "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
         "references/literature.md": "\n".join("| ref{} | x |".format(i) for i in range(1, 9)),
         "references/data_sources.md": "方法学文献见 references/literature.md（唯一文献登记源）。\n",
+        "repro/VERIFY_SUMMARY.json": json.dumps({
+            "schema_version": 3, "gates": {"layout": {"fails": 0, "warns": 0}},
+            "required_gates": ["layout"], "failed_gate_ids": [],
+            "overall": "PASS", "release_ready": True,
+            "gate_snapshot_sha256": "0" * 64, "issue_ids": [], "warns": 0}),
     })
     try:
+        _finalize_manifest(tws)
         results.append(report("T82.good", "data_sources 唯一登记源 PASS", True,
                               run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
     finally:
@@ -1893,11 +1940,21 @@ def main():
     # T85.good ledger 存在且无 open P0/P1 -> PASS
     _td, tws = _support_ws({
         "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
-        "repro/VERIFY_SUMMARY.json": json.dumps({"warns": 2, "fails": 0}),
+        "repro/VERIFY_SUMMARY.json": json.dumps({
+            "schema_version": 3, "gates": {"layout": {"fails": 0, "warns": 2}},
+            "required_gates": ["layout"], "failed_gate_ids": [],
+            "overall": "PASS", "release_ready": True,
+            "gate_snapshot_sha256": "0" * 64,
+            "issue_ids": ["layout:page_fill:abcdef00"],
+            "warns": 2}),
         "repro/warning_ledger.json": json.dumps({"warnings": [
-            {"id": "layout_w01", "gate": "layout", "message": "x", "status": "fixed", "reason": "修"}]}),
+            {"issue_id": "layout:page_fill:abcdef00", "gate": "layout", "severity": "WARN",
+             "message": "x", "message_sha256": "e" * 64,
+             "status": "fixed", "reason": "修", "evidence": {}}],
+            "open_p01": 0}),
     })
     try:
+        _finalize_manifest(tws)
         results.append(report("T85.good", "WARN ledger 已关 PASS", True,
                               run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
     finally:
@@ -1966,6 +2023,319 @@ def main():
             _td.cleanup()
     except ImportError:
         print("[SKIP] T89 缺少 PyMuPDF")
+
+
+    # ================= v4.4（P0-01~P0-07, T110-T123）：反 false-pass 回归 =================
+
+    _td, tws = _support_ws({}, workspace_files={
+        "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                             "entry": "paper/main.tex", "hil_policy": "disabled"}),
+        "reports/decisions/MODEL_SELECTION_DECISION.json": json.dumps({
+            "schema_version": 1, "decisions": [{
+                "decision_id": "Q4-D01", "decision_type": "model_family",
+                "selection_rule": "pre_specified_primary_family", "selected": "lr",
+                "before_result_artifacts": ["results/p4_best.json"],
+                "candidate_ids": ["lr", "rf", "gbdt"], "rejected": ["rf", "gbdt"]}]}),
+        "results/RESULT_REGISTRY.json": json.dumps({"artifacts": []}),
+        "results/p4_best.json": json.dumps({"best": "lr_full", "mean_auprc": 0.45}),
+        "code/problem4.py": (
+            "cand = {'lr_full': s, 'rf': s2}\\n"
+            "best_name = max(cand, key=lambda k: cand[k]['mean_auprc'])\\n"),
+    })
+    try:
+        results.append(report("T110", "pre_specified 决策 + runtime argmax 选家族 FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T111 论文 fixed + 代码 GridSearchCV 矛盾 -> FAIL
+    _td, tws = _support_ws({}, workspace_files={
+        "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                             "entry": "paper/main.tex", "hil_policy": "disabled"}),
+        "reports/FINAL_MODEL_SPEC.json": json.dumps({
+            "schema_version": 2, "contract_rev": 5, "problems": [{
+                "problem_id": "Q4", "outcome": {"type": "binary"},
+                "model": {"family": "logistic_regression", "role": "primary"},
+                "features": {"feature_set_id": "F4"}, "paper_section": "8_problem4",
+                "prediction_output": {"type": "uncalibrated_score"},
+                "result_keys": [], "figure_ids": [], "analysis_unit": "x",
+                "observation_mechanism": {}, "selection": {}, "uncertainty": {}}]}),
+        "paper/sections/8_problem4.tex": "随机森林（300 棵树、默认深度）在建模阶段固定。",
+        "results/RESULT_REGISTRY.json": json.dumps({"artifacts": []}),
+        "code/problem4.py": (
+            "from sklearn.ensemble import RandomForestClassifier\\n"
+            "GridSearchCV(RandomForestClassifier(n_estimators=300), "
+            "{'max_depth': [4, 8, None]})\\n"),
+    })
+    try:
+        results.append(report("T111", "论文 fixed + 代码 GridSearchCV 矛盾 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T112 uncalibrated_score 但结果写概率阈值 -> FAIL
+    _td, tws = _support_ws({}, workspace_files={
+        "reports/FINAL_MODEL_SPEC.json": json.dumps({
+            "schema_version": 2, "contract_rev": 5, "problems": [{
+                "problem_id": "Q4", "model": {"family": "logistic_regression"},
+                "prediction_output": {"type": "uncalibrated_score"}}]}),
+        "results/p4_rules.json": json.dumps({"note": "概率阈值 0.0395 判定"}),
+    })
+    try:
+        results.append(report("T112", "结果 JSON 写『概率阈值』FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T113 caption 硬编码 stale Figure 4 -> FAIL
+    _td, tws = _support_ws({}, workspace_files={
+        "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                             "entry": "paper/main.tex", "hil_policy": "disabled"}),
+        "figures/figure_manifest.json": json.dumps([{
+            "id": "fig_q4_roc", "visual_priority": "primary", "files": ["figures/fig_q4_roc.pdf"],
+            "source": {"source_results": [], "generator": "x.py"},
+            "caption": "PR 曲线见 Figure 4 的 A 面板",
+            "panels": [], "annotations": [], "story": {"claims": []}}]),
+        "figures/fig_q4_roc.pdf": "x",
+    })
+    try:
+        results.append(report("T113", "stale Figure 4 引用 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T114 低填充页 + section heading+table 下一页 -> FAIL（合成 PDF）
+    try:
+        import fitz as _fz
+        _td, tws = _support_ws({}, workspace_files={
+            "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                                 "entry": "paper/main.pdf", "hil_policy": "disabled"}),
+        })
+        try:
+            (tws / "paper").mkdir(exist_ok=True)
+            with _fz.open() as d:
+                p1 = d.new_page()
+                for i in range(18):
+                    p1.insert_text((72, 120 + i * 12), "假设说明第 %d 句内容文字。" % (i + 1),
+                                   fontsize=10)
+                p2 = d.new_page()
+                p2.insert_text((72, 90), "四、符号说明", fontsize=13)
+                p2.insert_text((72, 125), "表1 主要符号说明", fontsize=11)
+                for i in range(6):
+                    p2.insert_text((72, 150 + i * 13), "符号 S%d 的含义说明与单位" % i, fontsize=10)
+                d.save(str(tws / "paper" / "main.pdf"))
+            results.append(report("T114", "page fill+next=section+table FAIL", False,
+                                  run([SCRIPTS / "layout_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T114 缺少 PyMuPDF")
+
+    # T115 reviewed_pages 集合不精确 / 缺 page_records -> FAIL
+    try:
+        import fitz as _fz
+        _td, tws = _support_ws({}, workspace_files={
+            "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                                 "entry": "paper/main.pdf", "hil_policy": "disabled"}),
+        })
+        try:
+            (tws / "paper").mkdir(exist_ok=True)
+            with _fz.open() as d:
+                d.new_page()
+                d.save(str(tws / "paper" / "main.pdf"))
+            sha = _hl.sha256((tws / "paper" / "main.pdf").read_bytes()).hexdigest()
+            (tws / "reports").mkdir(parents=True, exist_ok=True)
+            json_write(tws / "reports" / "visual_review.json", {"reviewed_pdf_sha256": sha})
+            json_write(tws / "reports" / "page_visual_review.json", {
+                "schema_version": 2, "reviewed_pdf_sha256": sha, "expected_pages": 1,
+                "reviewed_pages": [1], "coverage_complete": True,
+                "page_records": [], "verdict": "PASS"})
+            results.append(report("T115", "reviewed 集合/records 不完整 FAIL", False,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T115 缺少 PyMuPDF")
+
+    # T116 BLOCKER resolution 非结构化 -> FAIL
+    try:
+        import fitz as _fz
+        _td, tws = _support_ws({}, workspace_files={
+            "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                                 "entry": "paper/main.pdf", "hil_policy": "disabled"}),
+        })
+        try:
+            (tws / "paper").mkdir(exist_ok=True)
+            with _fz.open() as d:
+                d.new_page()
+                d.save(str(tws / "paper" / "main.pdf"))
+            sha = _hl.sha256((tws / "paper" / "main.pdf").read_bytes()).hexdigest()
+            (tws / "reports").mkdir(parents=True, exist_ok=True)
+            json_write(tws / "reports" / "visual_review.json", {"reviewed_pdf_sha256": sha})
+            json_write(tws / "reports" / "page_visual_review.json", {
+                "schema_version": 2, "reviewed_pdf_sha256": sha, "expected_pages": 1,
+                "reviewed_pages": [1],
+                "page_records": [{"page": 1, "verdict": "OK", "checks": [], "issues": []}],
+                "page_findings": [{"page": 1, "type": "orphan_spill", "severity": "BLOCKER",
+                                   "resolution": "已修复"}],
+                "verdict": "PASS"})
+            results.append(report("T116", "非结构化 resolution 放行 FAIL", False,
+                                  run([SCRIPTS / "visual_review_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T116 缺少 PyMuPDF")
+
+    # T117 gate registry SSOT：run_all_gates 源码不得硬编码 gate 元组（子串检测）
+    try:
+        real_src = (SCRIPTS / "run_all_gates.py").read_text(encoding="utf-8")
+        bad = [s for s in ("project_manifest", "submission_package_gate", "layout_gate")
+               if (DQ + s + DQ + ", scripts") in real_src]
+        results.append(report("T117", "run_all_gates 无硬编码 gate 元组（registry SSOT）",
+                              not bad and "workflow_spec" in real_src))
+    except Exception:
+        results.append(report("T117", "检测失败", False,
+                              SimpleNamespace(returncode=1, stdout="", stderr="")))
+
+    # T118 declared R 无 RENDER_PROVENANCE -> FAIL
+    _td, tws = _support_ws({}, workspace_files={
+        "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                             "entry": "paper/main.tex", "hil_policy": "disabled"}),
+        "figures/figure_manifest.json": json.dumps([{
+            "id": "fig_q4_roc", "visual_priority": "primary", "files": ["figures/fig_q4_roc.pdf"],
+            "source": {"source_results": [], "generator": "R/plots/fig_q4_roc.R"},
+            "caption": "ROC", "panels": [], "annotations": [], "story": {"claims": []}}]),
+        "figures/specs/fig_q4_roc.figure.json": json.dumps({
+            "figure_id": "fig_q4_roc", "claim_id": "Q4.PRIMARY_ROC", "figure_role": "secondary",
+            "evidence_type": "roc", "renderer": "r_ggplot2", "layout": {"grid_columns": 12,
+            "panels": [{"id": "A", "role": "primary"}]},
+            "visual_encoding": {"primary": "dark_blue", "comparators": "gray"},
+            "label_budget": 6, "final_width_mm": 120}),
+        "renv.lock": "x",
+    })
+    try:
+        results.append(report("T118", "declared R 无 RENDER_PROVENANCE FAIL", False,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T119 R clean-room：本机有 R 时须可渲染 golden 并输出非空矢量
+    try:
+        proc = subprocess.run([sys.executable, str(TESTS_DIR / "r_cleanroom.py")],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        is_verified = "NOT VERIFIED" not in (proc.stdout or "")
+        results.append(report("T119", "R clean-room 渲染 golden（有 R 环境）",
+                              proc.returncode == 0 and is_verified))
+    except Exception:
+        results.append(report("T119", "构建失败", False,
+                              SimpleNamespace(returncode=1, stdout="", stderr="")))
+
+    # T120 idea 引用完整性：primary 悬空/缺 minimal -> FAIL
+    _td, tws = _support_ws({}, workspace_files={
+        "project.manifest.json": json.dumps({"schema_version": 1, "engine": "latex",
+                                             "entry": "paper/main.tex", "hil_policy": "disabled"}),
+        "reports/contracts/QUESTION_CONTRACT.json": json.dumps({
+            "schema_version": 1, "questions": [
+                {"question_id": "Q1", "original_request": "x", "decision_target": "y",
+                 "analysis_unit": "z", "observation_unit": "w", "required_outputs": []}]}),
+        "reports/contracts/IDEA_CANDIDATES.json": json.dumps({
+            "schema_version": 1, "candidates": [
+                {"idea_id": "Q1-I01", "question_id": "Q1", "method_family": "m",
+                 "core_hypothesis": "h", "required_assumptions": ["a"],
+                 "failure_conditions": ["f"], "tier": "advanced_alternative"}]}),
+        "reports/contracts/IDEA_DECISION.json": json.dumps({
+            "schema_version": 1, "primary": {"Q1": "Q1-I99"},
+            "accepted": ["Q1-I01"], "rejected": ["Q1-I99"]}),
+    })
+    try:
+        results.append(report("T120", "primary 悬空/缺 minimal FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T121-T123：submission_package_gate 内部校验函数（合成 root 直接断言）
+    try:
+        sys.path.insert(0, str(SCRIPTS))
+        import submission_package_gate as _spg
+        _td, tws = _support_ws({})
+        try:
+            root = tws
+            (root / "repro").mkdir(parents=True, exist_ok=True)
+            json_write(root / "repro" / "VERIFY_SUMMARY.json", {
+                "overall": "FAIL", "release_ready": False, "gate_snapshot_sha256": "a" * 64,
+                "required_gates": ["layout"], "failed_gate_ids": ["layout"],
+                "gates": {"layout": {"fails": 2, "warns": 1}}, "issue_ids": []})
+            json_write(root / "repro" / "warning_ledger.json", {"warnings": [], "open_p01": 0})
+            problems = []
+            _spg.check_release_and_ledger(tws, root, problems)
+            ok = bool(problems)
+            results.append(report("T121", "release_ready=false 拒绝发布", ok,
+                                  SimpleNamespace(returncode=0 if ok else 1, stdout="", stderr=""),
+                                  "" if ok else "release_ready=false 未被拦截"))
+        finally:
+            _td.cleanup()
+    except Exception as _e121:
+        print("[DBG] T121 fixture 异常:", repr(_e121))
+        results.append(report("T121", "构建失败", False,
+                              SimpleNamespace(returncode=1, stdout="", stderr="")))
+
+    try:
+        import submission_package_gate as _spg2
+        _td, tws = _support_ws({})
+        try:
+            root = tws
+            (root / "repro").mkdir(parents=True, exist_ok=True)
+            json_write(root / "repro" / "VERIFY_SUMMARY.json", {
+                "overall": "PASS", "release_ready": True, "gate_snapshot_sha256": "b" * 64,
+                "required_gates": ["layout"], "failed_gate_ids": [],
+                "gates": {"layout": {"fails": 0, "warns": 2}},
+                "issue_ids": ["layout:page_fill:abcdef00", "layout:thresh:11223344"],
+                "warns": 2})
+            json_write(root / "repro" / "warning_ledger.json", {
+                "warnings": [{"issue_id": "layout:page_fill:abcdef00", "severity": "WARN",
+                              "message_sha256": "x" * 64, "status": "open", "reason": None}],
+                "open_p01": 0})
+            problems = []
+            _spg2.check_release_and_ledger(tws, root, problems)
+            ok = bool(problems)
+            results.append(report("T122", "ledger 缺条/多报/模板销号 FAIL", ok,
+                                  SimpleNamespace(returncode=0 if ok else 1, stdout="", stderr=""),
+                                  "" if ok else "ledger 覆盖未被拦截"))
+        finally:
+            _td.cleanup()
+    except Exception as _e122:
+        print("[DBG] T122 fixture 异常:", repr(_e122))
+        results.append(report("T122", "构建失败", False,
+                              SimpleNamespace(returncode=1, stdout="", stderr="")))
+
+    try:
+        import submission_package_gate as _spg3
+        _td, tws = _support_ws({})
+        try:
+            root = tws
+            (root / "repro").mkdir(parents=True, exist_ok=True)
+            json_write(root / "repro" / "SUBMISSION_MANIFEST.json", {
+                "schema_version": 1, "package_sha256": "c" * 64, "package_files": 99,
+                "files": [{"path": "code/problem4.py", "size": 0}],
+                "payload_manifest_sha256": ""})
+            import zipfile as _zf2
+            zp = tws / "bad.zip"
+            with _zf2.ZipFile(zp, "w") as z:
+                z.writestr("code/problem4.py", "x")
+            problems = []
+            _spg3.check_manifest_integrity(tws, root, zp, problems)
+            ok = bool(problems)
+            results.append(report("T123", "manifest size=0/自引用/缺 sidecar FAIL", ok,
+                                  SimpleNamespace(returncode=0 if ok else 1, stdout="", stderr=""),
+                                  "" if ok else "manifest 完整性未被拦截"))
+        finally:
+            _td.cleanup()
+    except Exception as _e123:
+        print("[DBG] T123 fixture 异常:", repr(_e123))
+        results.append(report("T123", "构建失败", False,
+                              SimpleNamespace(returncode=1, stdout="", stderr="")))
+
+
 
 
     n_fail = sum(1 for ok in results if not ok)

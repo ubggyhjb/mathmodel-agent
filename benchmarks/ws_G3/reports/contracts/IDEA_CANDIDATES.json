@@ -45,6 +45,20 @@
       "complexity": "medium",
       "interpretability": "high",
       "status": "candidate"
+    },
+    {
+      "idea_id": "gold-I99",
+      "question_id": "Q4",
+      "method_family": "exact_event_model",
+      "core_hypothesis": "x",
+      "required_assumptions": [
+        "a"
+      ],
+      "failure_conditions": [
+        "f"
+      ],
+      "status": "rejected",
+      "rejection_reason": "DGP 不兼容"
     }
   ]
 }
