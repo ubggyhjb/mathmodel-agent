@@ -308,6 +308,8 @@ class Gate:
                 continue
             if "参考文献" in p["text"]:
                 continue
+            if p["imgs"] > 0:
+                continue  # 大图（float 页）独占页为完整对象，不判 near-empty（v4.3 T96 修正）
             if len(p["text"].strip()) < 120:
                 near_empty_pages.append(p["n"])
         if near_empty_pages:
