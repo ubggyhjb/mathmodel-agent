@@ -1266,6 +1266,119 @@ def main():
     finally:
         td.cleanup()
 
+    # ============ v4.3 brainstorm contracts regression（T65-T69，任务书 v4.3 §12） ============
+
+    def _idea_ws(fail_cond_ok=True, with_i10=False, spec_idea="Q1-I02", primary="Q1-I02",
+                 no_evidence=False, claim_word=None, report_text=None):
+        td = tempfile.TemporaryDirectory()
+        tws = Path(td.name)
+        (tws / "reports" / "contracts").mkdir(parents=True, exist_ok=True)
+        json_write(tws / "reports" / "contracts" / "QUESTION_CONTRACT.json",
+                   {"schema_version": 1, "questions": [{
+                       "question_id": "Q1", "original_request": "...", "decision_target": "...",
+                       "analysis_unit": "pregnant_woman", "observation_unit": "test_record",
+                       "required_outputs": [], "allowed_information": [], "forbidden_information": [],
+                       "special_data_structure": ["left_censoring", "interval_censoring", "right_censoring"],
+                       "evaluation_target": []}]})
+        cands = [
+            {"idea_id": "Q1-I01", "question_id": "Q1", "method_family": "turnbull_interval",
+             "tier": "minimal_sufficient_solution", "core_hypothesis": "非参数区间删失估计",
+             "why_applicable": "数据为删失", "required_variables": [], "required_assumptions": ["观测机制一致"],
+             "data_risks": [], "strengths": [], "weaknesses": [], "validation_plan": [],
+             "failure_conditions": ["删失比例过高"], "complexity": "low", "interpretability": "high",
+             "status": "candidate"},
+            {"idea_id": "Q1-I02", "question_id": "Q1", "method_family": "interval_censored_aft",
+             "tier": "recommended_solution", "core_hypothesis": "AFT 可解释时点",
+             "why_applicable": "删失+协变量", "required_variables": ["BMI"],
+             "required_assumptions": ["对数正态误差"], "data_risks": [], "strengths": [],
+             "weaknesses": [], "validation_plan": [], "failure_conditions": ["组间异质"],
+             "complexity": "medium", "interpretability": "high", "status": "candidate"},
+            {"idea_id": "Q1-I03", "question_id": "Q1", "method_family": "joint_model",
+             "tier": "advanced_alternative", "core_hypothesis": "联合建模",
+             "why_applicable": "", "required_variables": [], "required_assumptions": ["a"],
+             "data_risks": [], "strengths": [], "weaknesses": [], "validation_plan": [],
+             "failure_conditions": ["收敛失败"], "complexity": "high", "interpretability": "low",
+             "status": "candidate"},
+        ]
+        if with_i10:
+            cands.append({"idea_id": "Q1-I10", "question_id": "Q1", "method_family": "exact_event_ols",
+                          "tier": "recommended_solution", "core_hypothesis": "精确事件回归",
+                          "why_applicable": "", "required_variables": [], "required_assumptions": ["a"],
+                          "data_risks": [], "strengths": [], "weaknesses": [], "validation_plan": [],
+                          "failure_conditions": ["f"], "complexity": "low", "interpretability": "high",
+                          "status": "candidate"})
+        if not fail_cond_ok:
+            cands[0]["failure_conditions"] = []
+        if no_evidence:
+            cands[2].pop("evidence_against_minimal", None)
+        else:
+            cands[2]["evidence_against_minimal"] = ["minimal 无法解释协变量效应"]
+        if claim_word:
+            cands[1]["core_hypothesis"] = f"{claim_word}该方法有效解决量化问题"
+        json_write(tws / "reports" / "contracts" / "IDEA_CANDIDATES.json",
+                   {"schema_version": 1, "candidates": cands})
+        json_write(tws / "reports" / "contracts" / "IDEA_DECISION.json",
+                   {"schema_version": 1, "primary": {"Q1": primary}, "accepted": ["Q1-I01", "Q1-I02"],
+                    "baseline": ["Q1-I01"], "backup": [], "exploratory": ["Q1-I03"],
+                    "rejected": ["Q1-I99"], "unresolved_questions": []
+                    if not with_i10 else []})
+        (tws / "reports" / "BRAINSTORM_REPORT.md").write_text(
+            "候选评估：Q1-I01 作为基线；Q1-I02 推荐。" if report_text is None else report_text,
+            encoding="utf-8")
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json",
+                   {"schema_version": 1, "project": "fixture", "contract_rev": 1,
+                    "problems": [{"problem_id": "Q1", "idea_id": spec_idea,
+                                  "primary_model": "interval_censored_aft"}]})
+        return td, tws
+
+    # T65 候选缺 failure_conditions -> idea_gate FAIL
+    td, tws = _idea_ws(fail_cond_ok=False)
+    try:
+        results.append(report("T65", "候选缺失败条件 FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T65.good 完整三件套（含 minimal/recommended/advanced + primary recommended）-> PASS
+    td, tws = _idea_ws()
+    try:
+        results.append(report("T65.good", "Brainstorm 三件套合规 PASS", True,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T66 rejected 候选进入 FINAL_MODEL_SPEC -> FAIL
+    td, tws = _idea_ws(spec_idea="Q1-I99")
+    try:
+        results.append(report("T66", "rejected 候选进入正式模型 FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T67 advanced primary 无 minimal 反证 -> FAIL
+    td, tws = _idea_ws(primary="Q1-I03", no_evidence=True)
+    try:
+        results.append(report("T67", "复杂 primary 无 minimal 证据 FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T68 Brainstorm 出现实验结论词 -> FAIL
+    td, tws = _idea_ws(claim_word="结果表明")
+    try:
+        results.append(report("T68", "Brainstorm 结论词 FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T69 契约声明删失但 primary 用 exact-event OLS 无标记 -> FAIL
+    td, tws = _idea_ws(with_i10=True, primary="Q1-I10", spec_idea="Q1-I10")
+    try:
+        results.append(report("T69", "删失数据精确事件模型 FAIL", False,
+                              run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

@@ -128,7 +128,7 @@ python skills/6verity/tests/run_tests.py --workspace <项目目录>  # 全量（
 <!-- docs_sync:stages -->
 | 阶段 | skill | 门禁 | 主要产出 | 目的 |
 |---|---|---|---|---|
-| brainstorm | brainstorm-mathmodel | — | reports/BRAINSTORM_REPORT.md | 读题后发散 ≥3 条候选路线，评估可行性/区分度/风险，收敛主选+备选 |
+| brainstorm | brainstorm-mathmodel | idea_contracts | reports/contracts/QUESTION_CONTRACT.json, reports/contracts/IDEA_CANDIDATES.json, reports/contracts/IDEA_DECISION.json, reports/BRAINSTORM_REPORT.md | 题意契约 + 受约束候选生成（minimal/recommended/advanced 三档）+ 淘汰状态机；禁止实验结论词；不直接形成可执行模型定义 |
 | analysis | 2analysis-modeling | — | reports/ANALYSIS_MODELING_REPORT.md | 解析题意、识别变量/约束/数据/评价指标；众数解清单 + 差异化审查 |
 | methodology_review | 7methodology-review | methodology | reports/methodology/*.json, reports/FINAL_MODEL_SPEC.json, figures/figure_manifest.json | DGP/假设/删失/退化/必要性/泄露/样本量审计；产出可执行模型契约 FINAL_MODEL_SPEC.json 与唯一 Figure Manifest（dr… |
 | coding_visual | 3coding-visual | leakage | code/*.py, results/*.json, figures/*.pdf, figures/*.meta.json | 只实现 FINAL_MODEL_SPEC.json 声明的模型；结果 JSON 写 model_spec_sha256；图写 meta.json |

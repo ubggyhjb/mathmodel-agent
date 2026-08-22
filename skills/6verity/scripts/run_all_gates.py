@@ -93,6 +93,9 @@ def gate_specs(ws: Path, strict: bool, skip: set):
          ["--workspace", str(ws), *strict_args], "reports/gates/leakage_gate.json"),
         ("figure_story", scripts / "figure_story.py",
          ["--workspace", str(ws), *strict_args], "reports/gates/figure_story.json"),
+        # v4.3（§12/T65-T69）：Brainstorm 契约门——候选契约/淘汰隔离/无结论词
+        ("idea_contracts", scripts / "idea_gate.py",
+         ["--workspace", str(ws), *strict_args], "reports/gates/idea_gate.json"),
         # v4.2（9.1/9.2）：verification 强制 substage——部署效用审计 + 提交包审计
         ("deployment_utility", scripts / "deployment_utility.py",
          ["--workspace", str(ws), *strict_args], "reports/deployment_utility.json"),
@@ -145,7 +148,7 @@ def semantic_problems(name, result, ws):
     elif name == "verify_refs":
         if doc is None:
             problems.append("verify_refs 未产出 JSON 报告")
-    elif name in ("methodology", "leakage", "figure_story", "text_integrity"):
+    elif name in ("methodology", "leakage", "figure_story", "text_integrity", "idea_contracts"):
         if doc is None:
             problems.append(f"{name} 未产出 JSON 报告")
     return problems

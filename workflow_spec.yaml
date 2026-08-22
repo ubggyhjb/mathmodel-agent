@@ -18,18 +18,30 @@ stages:
   - id: brainstorm
     skill: brainstorm-mathmodel
     inputs: []
-    outputs: ["reports/BRAINSTORM_REPORT.md"]
-    gate: ""
-    purpose: "读题后发散 ≥3 条候选路线，评估可行性/区分度/风险，收敛主选+备选"
+    outputs:
+      - "reports/contracts/QUESTION_CONTRACT.json"
+      - "reports/contracts/IDEA_CANDIDATES.json"
+      - "reports/contracts/IDEA_DECISION.json"
+      - "reports/BRAINSTORM_REPORT.md"
+    gate: idea_contracts
+    purpose: "题意契约 + 受约束候选生成（minimal/recommended/advanced 三档）+ 淘汰状态机；禁止实验结论词；不直接形成可执行模型定义"
   - id: analysis
     skill: 2analysis-modeling
-    inputs: ["reports/BRAINSTORM_REPORT.md"]
+    inputs:
+      - "reports/contracts/QUESTION_CONTRACT.json"
+      - "reports/contracts/IDEA_CANDIDATES.json"
+      - "reports/contracts/IDEA_DECISION.json"
+      - "reports/BRAINSTORM_REPORT.md"
     outputs: ["reports/ANALYSIS_MODELING_REPORT.md"]
     gate: ""
     purpose: "解析题意、识别变量/约束/数据/评价指标；众数解清单 + 差异化审查"
   - id: methodology_review
     skill: 7methodology-review
-    inputs: ["reports/ANALYSIS_MODELING_REPORT.md"]
+    inputs:
+      - "reports/contracts/QUESTION_CONTRACT.json"
+      - "reports/contracts/IDEA_CANDIDATES.json"
+      - "reports/contracts/IDEA_DECISION.json"
+      - "reports/ANALYSIS_MODELING_REPORT.md"
     outputs:
       - "reports/methodology/*.json"
       - "reports/FINAL_MODEL_SPEC.json"
@@ -94,6 +106,7 @@ gates_pipeline:
   - methodology
   - leakage
   - figure_story
+  - idea_contracts
 
 final_review:
   personas:
