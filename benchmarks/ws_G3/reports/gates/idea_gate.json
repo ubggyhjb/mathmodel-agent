@@ -1,0 +1,30 @@
+{
+  "gate": "idea_contracts",
+  "schema_version": 1,
+  "workspace": "C:\\Users\\Administrator\\.dsh\\.agent-presets\\mathmodel\\benchmarks\\ws_G3",
+  "strict": true,
+  "engine": "latex",
+  "inputs": {
+    "question_contract": true,
+    "idea_candidates": true,
+    "idea_decision": true
+  },
+  "findings": [
+    {
+      "level": "OK",
+      "check": "question_contract",
+      "message": "题意契约已产出：1 问（决策目标/分析单位/数据结构已登记）"
+    },
+    {
+      "level": "OK",
+      "check": "idea_candidates",
+      "message": "候选契约已产出：2 条候选（含强度/弱点/失败条件/三档）"
+    }
+  ],
+  "summary": {
+    "fails": 0,
+    "warns": 0,
+    "checks": 2
+  },
+  "note": "Brainstorm 三件套由 brainstorm-mathmodel 阶段机器化产出；FAIL 项先修收敛决策，禁止放宽。"
+}

@@ -1,0 +1,29 @@
+{
+  "gate": "figure_story",
+  "schema_version": 2,
+  "workspace": "C:\\Users\\Administrator\\.dsh\\.agent-presets\\mathmodel\\skills\\6verity\\tests\\tmp_methodology",
+  "strict": true,
+  "engine": "latex",
+  "manifest": "figures/figure_manifest.json",
+  "legacy_used": false,
+  "n_manifest": 0,
+  "n_primary": 0,
+  "n_used": 1,
+  "findings": [
+    {
+      "level": "FAIL",
+      "check": "manifest",
+      "message": "figures/figure_manifest.json 缺失或非数组：主图未做 Figure Story 定义（v4.1 唯一清单，无旧路径回退）"
+    },
+    {
+      "level": "FAIL",
+      "check": "coverage",
+      "message": "正文引用但未登记 Figure Story 的图：['fig_q1']"
+    }
+  ],
+  "summary": {
+    "fails": 2,
+    "warns": 0
+  },
+  "note": "v4：多余/被取代/空 panel/annotation 无来源/caption 不一致均硬 FAIL；meta.json 缺失 WARN（新图强制）"
+}

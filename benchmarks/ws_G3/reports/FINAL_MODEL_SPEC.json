@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "project": "fixture-methodology",
+  "generated_at": "2026-01-01T00:00:00+08:00",
+  "generated_by": "7methodology-review",
+  "contract_rev": 2,
+  "problems": [
+    {
+      "problem_id": "Q4",
+      "analysis_unit": "pregnant_woman",
+      "outcome": {
+        "id": "y_t",
+        "type": "continuous",
+        "unit": "unit",
+        "definition": "合成时间序列"
+      },
+      "observation_mechanism": {
+        "left_censoring": false,
+        "interval_censoring": false,
+        "right_censoring": false
+      },
+      "primary_model": "interval_censored_weibull_aft",
+      "likelihood": "none",
+      "likelihood_evidence": [
+        "时间序列",
+        "ARIMA"
+      ],
+      "covariates": [
+        "BMI"
+      ],
+      "excluded_covariates": {},
+      "validation": "nested cv",
+      "result_keys": [
+        "results/p0.json#a"
+      ],
+      "figure_ids": [
+        "fig1"
+      ],
+      "paper_section": "main.tex",
+      "mechanism_change_rationale": "",
+      "model": {
+        "family": "arima",
+        "distribution": null,
+        "role": "primary_decision"
+      },
+      "features": {
+        "feature_set_id": "G3.ARIMA.v1",
+        "included": [
+          {
+            "id": "bmi",
+            "role": "covariate"
+          }
+        ],
+        "excluded": []
+      },
+      "selection": {
+        "model_family": "design_decision",
+        "feature_selection": "none",
+        "hyperparameter_selection": "none"
+      },
+      "uncertainty": {
+        "sampling": "se",
+        "model_form": false,
+        "decision_window": false
+      }
+    }
+  ]
+}

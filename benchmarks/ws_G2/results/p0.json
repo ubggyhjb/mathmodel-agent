@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "problem_id": "Q2",
+    "role": "paper_authority",
+    "model_spec_sha256": "03c3c356d8ba8f36f2d1dee545593a5e9d380905c15422a1d81871375d774ae5",
+    "contract_rev": 2,
+    "model_family": "logistic_regression",
+    "model_distribution": null,
+    "feature_set_id": "G2.LR.v1"
+  },
+  "a": 1
+}

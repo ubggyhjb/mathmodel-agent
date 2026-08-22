@@ -1,0 +1,1 @@
+{"analysis_unit":"孕妇","repeated_measurement":true,"group_id_field":"woman_id","within_group_dependence":true,"outcome_directly_observed":false,"censoring":{"left":true,"interval":true,"right":true,"truncation":false},"missingness":false,"measurement_error":false,"class_imbalance":false,"time_dependence":true,"notes":""}

@@ -1,0 +1,19 @@
+{
+  "questions": [
+    {
+      "question_id": "Q3",
+      "special_data_structure": [
+        "interval_censoring",
+        "left_censoring",
+        "right_censoring"
+      ],
+      "decision_target": "x",
+      "analysis_unit": "unit",
+      "observation_unit": "record",
+      "required_outputs": [],
+      "allowed_information": [],
+      "forbidden_information": [],
+      "evaluation_target": []
+    }
+  ]
+}

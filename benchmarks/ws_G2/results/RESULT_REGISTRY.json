@@ -1,0 +1,10 @@
+{
+  "artifacts": [
+    {
+      "file": "results/p0.json",
+      "role": "paper_authority",
+      "problem_id": "Q2",
+      "requires_model_spec_binding": true
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "primary": {
+    "Q3": "gold-I02"
+  },
+  "accepted": [
+    "gold-I01",
+    "gold-I02"
+  ],
+  "baseline": [
+    "gold-I01"
+  ],
+  "backup": [],
+  "exploratory": [],
+  "rejected": [
+    "gold-I99"
+  ],
+  "unresolved_questions": [],
+  "rejection_reasons": {
+    "gold-I99": "DGP 不兼容"
+  }
+}

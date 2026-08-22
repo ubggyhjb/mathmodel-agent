@@ -1,0 +1,50 @@
+{
+  "candidates": [
+    {
+      "idea_id": "gold-I01",
+      "question_id": "Q3",
+      "method_family": "baseline_method",
+      "tier": "minimal_sufficient_solution",
+      "core_hypothesis": "简单基线可回答题目",
+      "why_applicable": "",
+      "required_variables": [],
+      "required_assumptions": [
+        "a"
+      ],
+      "data_risks": [],
+      "strengths": [],
+      "weaknesses": [],
+      "validation_plan": [],
+      "failure_conditions": [
+        "f"
+      ],
+      "complexity": "low",
+      "interpretability": "high",
+      "status": "candidate"
+    },
+    {
+      "idea_id": "gold-I02",
+      "question_id": "Q3",
+      "method_family": "recommended_family",
+      "tier": "recommended_solution",
+      "core_hypothesis": "推荐方法具备可解释性",
+      "why_applicable": "",
+      "required_variables": [
+        "bmi"
+      ],
+      "required_assumptions": [
+        "a"
+      ],
+      "data_risks": [],
+      "strengths": [],
+      "weaknesses": [],
+      "validation_plan": [],
+      "failure_conditions": [
+        "f"
+      ],
+      "complexity": "medium",
+      "interpretability": "high",
+      "status": "candidate"
+    }
+  ]
+}

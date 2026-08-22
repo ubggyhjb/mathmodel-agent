@@ -1,0 +1,1 @@
+{"models":[{"id":"LMM","role":"Primary","changes_conclusion":false,"improves_performance":true,"explains_mechanism":true,"used_in_decision":true},{"id":"OLS","role":"Baseline"},{"id":"Bootstrap","role":"Robustness"},{"id":"TwoStage","role":"Rejected","moved_to_appendix":true}],"content_share":{"primary":0.7,"baseline":0.15,"robustness":0.15},"moved_to_appendix":["TwoStage"]}

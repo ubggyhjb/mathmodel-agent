@@ -1,0 +1,17 @@
+{
+  "questions": [
+    {
+      "question_id": "Q2",
+      "special_data_structure": [
+        "repeated_measurement"
+      ],
+      "decision_target": "x",
+      "analysis_unit": "unit",
+      "observation_unit": "record",
+      "required_outputs": [],
+      "allowed_information": [],
+      "forbidden_information": [],
+      "evaluation_target": []
+    }
+  ]
+}

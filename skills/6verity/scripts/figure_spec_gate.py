@@ -75,6 +75,16 @@ def check_figure_specs(ws, strict, findings):
             _violation(findings, "figure_spec",
                        f"{fid}.figure.json 的 figure_id={spec.get('figure_id')} 与清单 id 不一致", strict)
         renderer = str(spec.get("renderer", ""))
+        if renderer == "auto":
+            # §22：auto 探测运行时必须记录实际 renderer，禁止静默切换
+            fallback = spec.get("renderer_fallback")
+            if not fallback:
+                _violation(findings, "renderer_repro",
+                           f"图 {fid} renderer=auto 但未记录 renderer_fallback——"
+                           f"渲染器不得静默切换（实际用什么必须在 spec 里写明）", strict)
+            elif fallback not in ("python_matplotlib", "r_ggplot2", "tikz", "svg_inkscape"):
+                _violation(findings, "renderer_repro",
+                           f"图 {fid} renderer_fallback={fallback!r} 非法", strict)
         if renderer == "r_ggplot2":
             has_renv = (ws / "renv.lock").is_file() or \
                        any((ws / "R").rglob("*.R")) and (ws / "requirements_r.txt").is_file()

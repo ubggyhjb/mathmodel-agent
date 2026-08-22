@@ -406,6 +406,18 @@ A_code.typ
 
 在所有章节完成后撰写中文摘要或英文 Summary Sheet。必须包含每个子问题的方法和精确的数值结果。
 
+**v4.3 摘要纪律（§29A.1/§35.9）**：
+
+- 摘要不是"正文压缩复述"：按「问题 → 主方法 → 核心结果 → 决策意义/边界」组织，默认以 **一页完整** 为目标（中文约 600–750 汉字为优先，非机械字数门）；
+- 禁止堆叠 baseline/所有 sensitivity/历史口径/全部例外——只保留主结论与必要的口径边界；
+- **摘要 + 关键词必须完整落在同一页**：出现关键词尾部单独掉页（orphan spill）时，处理优先级为 *压缩摘要内容 > 调整段前段后 > 关键词排版 > 局部 float/分页策略 > 最后才是极小幅版式微调*，**禁止优先缩字号/页边距/行距**；
+- 关键词默认中文固定宽度分隔（`\quad` / 约 1em，如 `NIPT\quad 区间删失`），不再默认强制全角分号（官方模板明确要求分号时例外）；
+- 摘要正文与关键词的断行由 6verity layout_gate（T95）/text_integrity（T25.quad）程序化复核。
+
+**v4.3 只读事实源（§35.9）**：Writing 阶段的模型/选择/结果描述只能读取并引用：
+`FINAL_MODEL_SPEC`、`MODEL_SELECTION_DECISION`、`RESULT_REGISTRY`、`CLAIM_PROVENANCE`、`figure_manifest`；
+禁止从旧 brainstorm/historical report 重新捡被淘汰的方法。
+
 ### 步骤 7：写作阶段 smoke gate（进入 6verity 前的自检）
 
 初稿完成、进入 6verity 前，先跑一次轻量 smoke gate 拦掉低级错误（不要带着可机检的硬错进验收）：

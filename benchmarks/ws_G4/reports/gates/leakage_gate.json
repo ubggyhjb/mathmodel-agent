@@ -1,0 +1,21 @@
+{
+  "gate": "leakage",
+  "schema_version": 2,
+  "workspace": "C:\\Users\\Administrator\\.dsh\\.agent-presets\\mathmodel\\benchmarks\\ws_G4",
+  "strict": true,
+  "engine": "latex",
+  "scope_file": true,
+  "runtime_audit_file": false,
+  "findings": [
+    {
+      "level": "WARN",
+      "check": "runtime",
+      "message": "results/leakage_audit.json 缺失：仅声明式证明（scope），无运行时 fold 隔离证据；v4 要求代码每折输出 train/test/threshold groups 断言"
+    }
+  ],
+  "summary": {
+    "fails": 0,
+    "warns": 1
+  },
+  "note": "代码启发式（check=code）为 WARN：误报率高，人工确认后销号；FAIL 来自声明/论文/运行时证据违规。"
+}

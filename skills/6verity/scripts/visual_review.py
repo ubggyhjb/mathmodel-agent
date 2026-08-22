@@ -70,11 +70,13 @@ def primary_figures(ws: Path) -> list:
 
 def main(argv=None):
     gc.force_utf8()
-    ap = argparse.ArgumentParser(description="v4.2 视觉审稿输入 + PDF SHA 绑定")
+    ap = argparse.ArgumentParser(description="v4.2 视觉审稿输入 + PDF SHA 绑定（v4.3 增三页上下文）")
     ap.add_argument("--workspace", default=".")
     ap.add_argument("--pages", type=int, default=30)
     ap.add_argument("--figures", default="",
                     help="逗号分隔的本次变更图 stem（changed figures 全审）；缺省 = primary 图全审")
+    ap.add_argument("--triplets", default="",
+                    help="v4.3（§29B.2）：逗号分隔的候选异常页——为每页渲染 N-1/N/N+1 三页上下文 PNG 到 reports/visual/triplets/")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args(argv)
 
@@ -94,6 +96,29 @@ def main(argv=None):
     doc = fitz.open(str(pdf))
     out_dir = ws / "reports" / "visual"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # v4.3（§29B.2）：候选异常页三页上下文（N-1 / N / N+1），contact sheet 只能做一级筛查
+    if args.triplets:
+        trip_dir = out_dir / "triplets"
+        trip_dir.mkdir(parents=True, exist_ok=True)
+        n_pages = doc.page_count
+        for tok in [t.strip() for t in args.triplets.split(",") if t.strip()]:
+            try:
+                center = int(tok)
+            except ValueError:
+                print(f"WARN 忽略非法页号 {tok!r}")
+                continue
+            if not (1 <= center <= n_pages):
+                print(f"WARN 页号 {center} 超出范围 1-{n_pages}")
+                continue
+            for delta in (-1, 0, 1):
+                pn = center + delta
+                if pn < 1 or pn > n_pages:
+                    continue
+                pix = doc[pn - 1].get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                pix.save(str(trip_dir / f"p{center:03d}_ctx_{pn:03d}.png"))
+        print(f"TRIPLETS: 已渲染候选异常页 {[t.strip() for t in args.triplets.split(',') if t.strip()]} "
+              f"的 N-1/N/N+1 上下文 -> {trip_dir}（14 页/页 1.5M 表示均可读）")
 
     # contact sheet（1-N 页；行数按请求页数动态计算，禁止画布溢出）
     n = min(args.pages, doc.page_count)

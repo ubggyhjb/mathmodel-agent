@@ -1,0 +1,1 @@
+{"problems":[{"id":"Q2","objective_only":10.0,"constraint_only":9.98,"full":9.99,"eps":0.05,"active_constraints":["a1"],"constraint_dominance_ratio":0.99,"objective_sensitivity":0.01}]}

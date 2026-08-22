@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "project": "fixture-methodology",
+  "generated_at": "2026-01-01T00:00:00+08:00",
+  "generated_by": "7methodology-review",
+  "contract_rev": 2,
+  "problems": [
+    {
+      "problem_id": "Q2",
+      "analysis_unit": "pregnant_woman",
+      "outcome": {
+        "id": "label",
+        "type": "binary",
+        "unit": "label",
+        "definition": "合成不平衡标签"
+      },
+      "observation_mechanism": {
+        "left_censoring": false,
+        "interval_censoring": false,
+        "right_censoring": false
+      },
+      "primary_model": "interval_censored_weibull_aft",
+      "likelihood": "none",
+      "likelihood_evidence": [
+        "逻辑回归",
+        "嵌套交叉验证"
+      ],
+      "covariates": [
+        "BMI"
+      ],
+      "excluded_covariates": {},
+      "validation": "nested cv",
+      "result_keys": [
+        "results/p0.json#a"
+      ],
+      "figure_ids": [
+        "fig1"
+      ],
+      "paper_section": "main.tex",
+      "mechanism_change_rationale": "",
+      "model": {
+        "family": "logistic_regression",
+        "distribution": null,
+        "role": "primary_decision"
+      },
+      "features": {
+        "feature_set_id": "G2.LR.v1",
+        "included": [
+          {
+            "id": "z21",
+            "role": "dosage"
+          }
+        ],
+        "excluded": [
+          {
+            "id": "y_fraction",
+            "reason": "unavailable"
+          }
+        ]
+      },
+      "selection": {
+        "model_family": "design_decision",
+        "feature_selection": "none",
+        "hyperparameter_selection": "none"
+      },
+      "uncertainty": {
+        "sampling": "se",
+        "model_form": false,
+        "decision_window": false
+      },
+      "prediction_output": {
+        "type": "uncalibrated_score",
+        "source": "logistic_regression_raw_output",
+        "probability_interpretation_allowed": false,
+        "calibration": "none"
+      }
+    }
+  ]
+}

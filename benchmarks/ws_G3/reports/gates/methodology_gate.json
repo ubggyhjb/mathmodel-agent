@@ -1,0 +1,85 @@
+{
+  "gate": "methodology",
+  "schema_version": 1,
+  "workspace": "C:\\Users\\Administrator\\.dsh\\.agent-presets\\mathmodel\\benchmarks\\ws_G3",
+  "strict": true,
+  "engine": "latex",
+  "inputs": {
+    "data_generating_process.json": true,
+    "statistical_assumptions.json": true,
+    "model_necessity.json": true,
+    "sample_sizes.json": true,
+    "optimization_degeneracy.json": true,
+    "censoring_report.json": true
+  },
+  "model_spec_present": true,
+  "missing_inputs": [],
+  "findings": [
+    {
+      "level": "OK",
+      "check": "model_spec",
+      "message": "契约已产出：1 个问题，contract_rev=2"
+    },
+    {
+      "level": "OK",
+      "check": "model_spec",
+      "message": "results/p0.json 绑定当前契约 (8cb12fb99ca5)"
+    },
+    {
+      "level": "WARN",
+      "check": "model_spec",
+      "message": "论文未声明消费 FINAL_MODEL_SPEC——建议在模型方法章节注明契约版本"
+    },
+    {
+      "level": "OK",
+      "check": "dgp",
+      "message": "repeated_measurement=true（woman_id 内相关），已识别重复测量结构"
+    },
+    {
+      "level": "OK",
+      "check": "dgp",
+      "message": "删失结构: ['left', 'interval', 'right']；截断=False"
+    },
+    {
+      "level": "OK",
+      "check": "dgp",
+      "message": "存在区间删失：候选模型须含 Turnbull / interval Weibull / log-normal / AFT"
+    },
+    {
+      "level": "WARN",
+      "check": "censoring",
+      "message": "候选模型 turnbull 未在论文正文出现（可仅在附录/方法说明）"
+    },
+    {
+      "level": "WARN",
+      "check": "censoring",
+      "message": "候选模型 interval_weibull 未在论文正文出现（可仅在附录/方法说明）"
+    },
+    {
+      "level": "WARN",
+      "check": "degeneracy",
+      "message": "问题 ['Q2'] 的 |full - constraint| 相对差 < 0.05：最终解主要由约束边界决定，目标函数对最终决策贡献有限；禁止将该目标函数包装为核心创新"
+    },
+    {
+      "level": "OK",
+      "check": "degeneracy",
+      "message": "未发现将退化目标函数包装为核心创新的表述"
+    },
+    {
+      "level": "OK",
+      "check": "necessity",
+      "message": "模型内容份额 primary=70% baseline=15% robustness=15% 达标"
+    },
+    {
+      "level": "OK",
+      "check": "conclusion",
+      "message": "未发现『最佳时点/精确决定』类强结论词"
+    }
+  ],
+  "summary": {
+    "fails": 0,
+    "warns": 4,
+    "checks": 12
+  },
+  "note": "门禁输入由 7methodology-review skill 生成；FAIL 项先修建模/论文，禁止改判放行。"
+}

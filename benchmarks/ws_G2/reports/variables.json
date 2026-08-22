@@ -1,0 +1,14 @@
+{
+  "bmi": {
+    "storage_unit": "kg_m2",
+    "availability": "available"
+  },
+  "z21": {
+    "storage_unit": "z_score",
+    "availability": "available"
+  },
+  "y_fraction": {
+    "storage_unit": "fraction",
+    "availability": "unavailable"
+  }
+}

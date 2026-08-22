@@ -1588,6 +1588,87 @@ def main():
     except ImportError:
         print("[SKIP] T100-T103 缺少 PyMuPDF")
 
+    # ============ v4.3 benchmark golden（T104-T109，任务书 v4.3 §31） ============
+    BENCH = Path(__file__).resolve().parents[3] / "benchmarks"
+
+    def _golden_copy(name):
+        src = BENCH / name
+        if not src.is_dir():
+            return None  # 仓库未含 benchmarks 时 SKIP
+        td = tempfile.TemporaryDirectory()
+        shutil.copytree(src, td.name, dirs_exist_ok=True)
+        return td, Path(td.name)
+
+    for name, gid in (("ws_G2", "G2"), ("ws_G3", "G3"), ("ws_G4", "G4")):
+        td_g = _golden_copy(name)
+        if td_g is None:
+            print(f"[SKIP] T{104 + list(('ws_G2', 'ws_G3', 'ws_G4')).index(name)} 缺 benchmarks/{name}")
+            skipped.append(f"T{104 + list(('ws_G2', 'ws_G3', 'ws_G4')).index(name)} golden[{name}]（仓库未含 benchmarks）")
+            continue
+        td, tws = td_g
+        try:
+            m = run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])
+            l = run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])
+            i = run([SCRIPTS / "idea_gate.py", "--workspace", tws, "--strict"])
+            ok = m.returncode == 0 and l.returncode == 0 and i.returncode == 0
+            proc = m if not ok else SimpleNamespace(returncode=0, stdout="", stderr="")
+            results.append(report(f"T{104 + list(('ws_G2', 'ws_G3', 'ws_G4')).index(name)}",
+                                  f"golden {gid} 核心门 PASS", ok, proc,
+                                  "" if ok else f"m={m.returncode} l={l.returncode} i={i.returncode}"))
+        finally:
+            td.cleanup()
+
+    # T107 trap：golden G2 家族选择登记 outer_test -> leakage FAIL
+    td_g = _golden_copy("ws_G2")
+    if td_g:
+        td, tws = td_g
+        try:
+            scope = json.loads((tws / "reports" / "methodology" / "ml_operation_scope.json")
+                               .read_text(encoding="utf-8"))
+            ops = scope.setdefault("operations", [])
+            if not any(o.get("operation") == "algorithm_family_selection" for o in ops):
+                ops.append({"operation": "algorithm_family_selection", "allowed_data": "inner_cv"})
+            for o in ops:
+                if o.get("operation") == "algorithm_family_selection":
+                    o["allowed_data"] = "outer_test"
+            json_write(tws / "reports" / "methodology" / "ml_operation_scope.json", scope)
+            results.append(report("T107", "trap: 家族选择 outer_test FAIL", False,
+                                  run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            td.cleanup()
+    else:
+        print("[SKIP] T107 缺 benchmarks/ws_G2")
+
+    # T108 trap：golden G3 spec included 引用 unavailable 变量 -> methodology FAIL
+    td_g = _golden_copy("ws_G3")
+    if td_g:
+        td, tws = td_g
+        try:
+            spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+            spec["problems"][0]["features"]["included"].append({"id": "y_fraction", "role": "x"})
+            json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+            results.append(report("T108", "trap: unavailable 变量入模 FAIL", False,
+                                  run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            td.cleanup()
+    else:
+        print("[SKIP] T108 缺 benchmarks/ws_G3")
+
+    # T109 trap：golden G4 spec figure_ids 引用不存在图 -> methodology FAIL（T74）
+    td_g = _golden_copy("ws_G4")
+    if td_g:
+        td, tws = td_g
+        try:
+            spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+            spec["problems"][0]["figure_ids"] = ["ghost_fig"]
+            json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+            results.append(report("T109", "trap: figure_ids 失效图 FAIL", False,
+                                  run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+        finally:
+            td.cleanup()
+    else:
+        print("[SKIP] T109 缺 benchmarks/ws_G4")
+
     # ============ v4.3 scientific figure system regression（T90-T94，任务书 v4.3 §25-27） ============
 
     def _fig_spec_ws(manifest_pri="primary", spec=None, with_code=None):

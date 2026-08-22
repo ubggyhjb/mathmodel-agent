@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "problem_id": "Q4",
+    "role": "paper_authority",
+    "model_spec_sha256": "8cb12fb99ca5da84e09fc7ff70eab78ab02d1a900b901575de9f6a6183f936cc",
+    "contract_rev": 2,
+    "model_family": "arima",
+    "model_distribution": null,
+    "feature_set_id": "G3.ARIMA.v1"
+  },
+  "a": 1
+}

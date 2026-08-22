@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "problem_id": "Q3",
+    "role": "paper_authority",
+    "model_spec_sha256": "ebdb581c9110f01895218be4562618ead38e19fd0e0ea1323f3bd25e41d487b3",
+    "contract_rev": 2,
+    "model_family": "aft",
+    "model_distribution": "lognormal",
+    "feature_set_id": "G4.AFT.v1"
+  },
+  "a": 1
+}

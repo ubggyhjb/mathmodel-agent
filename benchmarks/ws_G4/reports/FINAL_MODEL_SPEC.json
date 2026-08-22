@@ -1,0 +1,69 @@
+{
+  "schema_version": 2,
+  "project": "fixture-methodology",
+  "generated_at": "2026-01-01T00:00:00+08:00",
+  "generated_by": "7methodology-review",
+  "contract_rev": 2,
+  "problems": [
+    {
+      "problem_id": "Q3",
+      "analysis_unit": "pregnant_woman",
+      "outcome": {
+        "id": "T",
+        "type": "time_to_event",
+        "unit": "week",
+        "definition": "达标时间（合成）"
+      },
+      "observation_mechanism": {
+        "left_censoring": true,
+        "interval_censoring": true,
+        "right_censoring": true
+      },
+      "primary_model": "interval_censored_weibull_aft",
+      "likelihood": "interval",
+      "likelihood_evidence": [
+        "区间删失",
+        "Turnbull",
+        "interval-censored"
+      ],
+      "covariates": [
+        "BMI"
+      ],
+      "excluded_covariates": {},
+      "validation": "nested cv",
+      "result_keys": [
+        "results/p0.json#a"
+      ],
+      "figure_ids": [
+        "fig1"
+      ],
+      "paper_section": "main.tex",
+      "mechanism_change_rationale": "",
+      "model": {
+        "family": "aft",
+        "distribution": "lognormal",
+        "role": "primary_decision"
+      },
+      "features": {
+        "feature_set_id": "G4.AFT.v1",
+        "included": [
+          {
+            "id": "bmi",
+            "role": "covariate"
+          }
+        ],
+        "excluded": []
+      },
+      "selection": {
+        "model_family": "design_decision",
+        "feature_selection": "none",
+        "hyperparameter_selection": "none"
+      },
+      "uncertainty": {
+        "sampling": "cluster_bootstrap",
+        "model_form": true,
+        "decision_window": true
+      }
+    }
+  ]
+}
