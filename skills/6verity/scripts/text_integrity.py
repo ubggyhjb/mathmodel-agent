@@ -248,7 +248,8 @@ def scan_internal_and_markdown(ws: Path, strict: bool):
             continue
         rel = p.relative_to(ws).as_posix()
         # 附录源码引用与参考文献区豁免（路径/文件名属合法内容）；
-        # appendix_source_list.tex 为附录生成片段（源码清单/路径/版本号属合法内容）
+        # appendix_source_list.tex 为附录生成片段（源码清单/路径/版本号属合法内容）；
+        # v4.3（P1-08/T83）：附录 A 支撑材料文件列表（supportfilescn 宏体）允许文件名（与 ZIP 一一对应）
         if "A_code" in rel or "references" in rel or "appendix_source_list" in rel:
             continue
         try:
@@ -260,6 +261,11 @@ def scan_internal_and_markdown(ws: Path, strict: bool):
         stripped = re.sub(r"(?m)(?<!\\)%.*$", "", text)
         if p.suffix.lower() == ".typ":
             stripped = re.sub(r"(?m)//.*$", "", stripped)
+        # 附录 A 支撑材料文件列表段豁免（文件名/契约名属合法内容）
+        m_app = re.search(r"\\newcommand\{\\supportfilescn\}\{(.*?)\n\}", stripped, re.S)
+        if m_app:
+            app_text = m_app.group(1)
+            stripped = stripped.replace(app_text, "")
         for pat, why in INTERNAL_TERM_PATTERNS:
             for m in re.finditer(pat, stripped):
                 findings.append({"level": "FAIL" if strict else "WARN", "check": "internal_term",

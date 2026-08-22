@@ -26,6 +26,7 @@ v4.2 目标：从"工作区十门全绿"升级到"最终 ZIP 在干净机器上�
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -103,6 +104,7 @@ def check_v43(ws: Path, root: Path, problems):
                     paper_text += p.read_text(encoding="utf-8", errors="replace") + "\n"
                 except Exception:
                     pass
+    paper_text = paper_text.replace("\\_", "_")  # LaTeX 转义下划线可视化为文件名
     claimed = set(re.findall(r"\b(code|results|figures|references|styles|repro|R|data)\s*/", paper_text))
     claimed |= {c for c in ("README.md", "requirements.txt", "run_all.py", "renv.lock",
                             "AI 工具使用详情") if c in paper_text}
@@ -127,9 +129,13 @@ def check_v43(ws: Path, root: Path, problems):
     readme = root / "README.md"
     if readme.is_file():
         rt = readme.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"以\s*预置值?\s*为\s*准|预置值.{0,12}为准|不一致.{0,12}预置值", rt):
+        for m in re.finditer(r"以\s*预置值?\s*为\s*准|预置值.{0,12}为准|不一致.{0,12}预置值\s*为?准?", rt):
+            neg = ml = max(0, m.start() - 12)
+            if re.search(r"不得|不能|禁止|不应|不以|不可|勿", rt[ml:m.start()]):
+                continue  # 否定语境（正确措辞："不得以预置值为准"）
             problems.append("README 写『不一致时以预置值为准』——reproduction 语义错误："
                             "预置值=reference snapshot，重跑=reproduction result，超容差应 FAIL/investigate（T84）")
+            break
     # T86 前置：VERIFY_SUMMARY / warning ledger
     vs = gc.load_json(root / "repro" / "VERIFY_SUMMARY.json", None)
     ledger = gc.load_json(root / "repro" / "warning_ledger.json", None)
