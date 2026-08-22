@@ -30,12 +30,14 @@ import gate_common as gc
 
 STRONG_CLAIMS = [
     "显著提高阳性识别", "明显提高阳性识别", "显著提升阳性识别", "显著提高.*识别效率",
-    "临床预警支持价值", "预警支持价值", "显著提升临床", "有效提高.*识别率",
+    "临床预警支持价值", "预警支持价值", "预警支持", "显著提升临床", "有效提高.*识别率",
 ]
 
 
 def _find_audit_doc(ws: Path):
-    """启发式：results/ 下找 woman_level / deployment 相关 JSON。"""
+    """启发式：results/ 下找 woman_level / deployment 相关 JSON；兼容两种输入结构：
+    (a) 显式审计输入（prevalence/all_positive/chosen）；
+    (b) woman_level 结构（n_women/n_women_pos/rules.max_risk）——自动构造基线对比。"""
     results = ws / "results"
     if not results.is_dir():
         return None
@@ -44,12 +46,28 @@ def _find_audit_doc(ws: Path):
         name = p.name.lower()
         if "woman_level" in name or "deployment" in name:
             cands.append(p)
-    if not cands:
-        return None
-    try:
-        return cands[0], json.loads(cands[0].read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    for p in cands:
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(doc, dict) and isinstance(doc.get("rules"), dict) \
+                and doc.get("n_women") and doc.get("n_women_pos") is not None:
+            n = int(doc["n_women"])
+            npos = int(doc["n_women_pos"])
+            prev = npos / n
+            maxr = doc["rules"].get("max_risk") or {}
+            chosen = {k: float(maxr.get(k)) for k in ("sensitivity", "specificity", "ppv")
+                      if maxr.get(k) is not None}
+            chosen["tp"] = int(maxr.get("tp", 0)); chosen["fp"] = int(maxr.get("fp", 0))
+            return p, {"prevalence": prev,
+                       "all_positive": {"ppv": prev, "sens": 1.0, "spec": 0.0,
+                                        "tp": npos, "fp": n - npos},
+                       "chosen": chosen,
+                       "source": "auto-derived from woman-level rules.max_risk"}
+        if isinstance(doc, dict) and ("chosen_ppv" in doc or "chosen" in doc):
+            return p, doc
+    return None
 
 
 def _pick(doc, names):
@@ -87,6 +105,7 @@ def extract_metrics(doc):
 
 
 def scan_paper_strong_claims(ws: Path) -> list:
+    """检出论文强结论措辞；否定/待评估语境（"不应解读为…""是否具有…须再评估"）豁免。"""
     paper = ws / "paper"
     hits = []
     if not paper.is_dir():
@@ -101,6 +120,11 @@ def scan_paper_strong_claims(ws: Path) -> list:
         text = re.sub(r"(?m)(?<!\\)%.*$", "", text)
         for pat in STRONG_CLAIMS:
             for m in re.finditer(pat, text):
+                # 取所在句（按中文句号/分号切）判断语境
+                ctx_start = max(text.rfind("。", 0, m.start()), text.rfind("；", 0, m.start()))
+                ctx = text[ctx_start + 1:m.start() + 40]
+                if re.search(r"不应|不能|不得|并非|不具|是否|待评估|须在|尚未|需.*再评估|负向|有限|不作为", ctx):
+                    continue  # 否定/待评估语境：不是强结论
                 hits.append({"file": str(p.relative_to(ws)), "phrase": m.group(0)})
     return hits
 

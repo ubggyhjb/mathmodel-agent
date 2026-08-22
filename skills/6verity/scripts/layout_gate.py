@@ -296,14 +296,20 @@ class Gate:
             except OSError:
                 continue
             for raw in TEX_INCLUDE_RE.findall(text):
-                target = f.parent / raw.strip()
-                if not target.suffix:
-                    target = target.with_suffix(".tex")
-                if not target.is_file():
+                # TeX 对嵌套 \input 的相对路径按编译工作目录（入口所在目录）解析；
+                # 也兼容"相对当前文件目录"的写法（v4.2 G-07 同源修复）
+                cands = [f.parent / raw.strip(), entry.parent / raw.strip()]
+                hit = None
+                for target in cands:
+                    target = target if target.suffix else target.with_suffix(".tex")
+                    if target.is_file():
+                        hit = target
+                        break
+                if hit is None:
                     missing.append(f"{raw.strip()}（自 {f.name}）")
                 else:
-                    found.append(target)
-                    stack.append(target)
+                    found.append(hit)
+                    stack.append(hit)
         # 收集全部 tex 文本用于引用/图/geometry
         all_text = ""
         for f in [entry, *found]:

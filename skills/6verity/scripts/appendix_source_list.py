@@ -48,15 +48,17 @@ def code_files(ws: Path) -> list:
 
 
 def _docstring_summary(path: Path) -> str:
-    """取源文件 docstring 第一行作为清单说明（无则空）。"""
+    """取源文件模块 docstring 第一行作为清单说明（AST 解析，无则空）。"""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        import ast
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        doc = (ast.get_docstring(tree) or "").strip()
     except Exception:
         return ""
-    m = re.search(r'"""\s*\n?([^\n"]+)"""', text) or re.search(r'"""(?:\s*\n)?([^\n"]+)', text)
-    if not m:
+    if not doc:
         return ""
-    return m.group(1).strip()[:60].replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+    first = re.split(r"[。\n]", doc)[0].strip()
+    return first[:60].replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
 
 
 def render(ws: Path) -> str:
@@ -67,7 +69,7 @@ def render(ws: Path) -> str:
         "%",
         "\\begin{center}",
         "  {\\fontsize{12pt}{14.4pt}\\heiti 支撑材料源码文件清单}\\\\[0.4em]",
-        "  \\begin{tabular}{p{2.8cm}p{11.0cm}}",
+        "  \\begin{tabular}{p{5.4cm}p{8.4cm}}",
         "    \\toprule",
         "    \\textbf{文件} & \\textbf{说明} \\\\",
         "    \\midrule",
@@ -75,7 +77,7 @@ def render(ws: Path) -> str:
     for name in names:
         summary = _docstring_summary(ws / "code" / name)
         disp = name.replace("_", "\\_")
-        lines.append(f"    {disp} & {summary if summary else '（无 docstring 说明）'} \\\\")
+        lines.append(f"    {{\\footnotesize\\ttfamily {disp}}} & {summary if summary else '（无 docstring 说明）'} \\\\")
     lines += [
         "    \\bottomrule",
         "  \\end{tabular}",

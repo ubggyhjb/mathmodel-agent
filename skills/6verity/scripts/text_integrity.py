@@ -247,8 +247,9 @@ def scan_internal_and_markdown(ws: Path, strict: bool):
         if p.suffix.lower() not in (".tex", ".typ"):
             continue
         rel = p.relative_to(ws).as_posix()
-        # 附录源码引用与参考文献区豁免（路径/文件名属合法内容）
-        if "A_code" in rel or "references" in rel:
+        # 附录源码引用与参考文献区豁免（路径/文件名属合法内容）；
+        # appendix_source_list.tex 为附录生成片段（源码清单/路径/版本号属合法内容）
+        if "A_code" in rel or "references" in rel or "appendix_source_list" in rel:
             continue
         try:
             text = p.read_text(encoding="utf-8")

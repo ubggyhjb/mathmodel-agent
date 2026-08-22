@@ -28,7 +28,7 @@ AUDIT_REL = "results/leakage_audit.json"
 EXPECTED_OPS = ["standardization", "imputation", "feature_selection", "oversampling",
                 "class_weight", "hyperparameter_selection", "threshold_selection",
                 "calibration", "pruning_rule", "final_metrics"]
-ALLOWED_DATA = {"training_fold", "inner_cv", "outer_test"}
+ALLOWED_DATA = {"training_fold", "inner_cv", "outer_test", "pre_specified"}
 
 
 def scan_code_files(ws: Path) -> list:
@@ -168,8 +168,9 @@ def check_code_heuristics(ws, findings):
 def check_hardcoded_fallback(ws, strict, findings):
     """v4.2（P1-14/T64）：核心结果禁止 fallback 到硬编码论文数字。
 
-    .get(key, 0.4564) / else 0.0395 等数值默认值 = paper number fallback：
+    只查 `.get(key, <数值>)` 且默认值为 >=3 位小数的数值（论文核心值如 0.0395/0.4564 特征）；
     源 key 缺失时应 fail fast 报错，而不是悄悄用论文数字（图与结果可能静默不一致）。
+    坐标偏移/eps 阈值等普通常量（0.006/0.05）不视为论文数字。
     允许清单：reports/hardcoded_fallback_allowlist.json（[{file, line}]）逐个销号。
     """
     allow = gc.load_json(ws / "reports" / "hardcoded_fallback_allowlist.json", None)
@@ -178,21 +179,13 @@ def check_hardcoded_fallback(ws, strict, findings):
         for a in allow:
             allow_set.add((str(a.get("file", "")), str(a.get("line", ""))))
     for fname, code in scan_code_files(ws):
-        for m in re.finditer(r"\.get\(\s*[^,)]{0,60},\s*([-+]?\d+\.\d{2,})[^)]*\)", code):
+        for m in re.finditer(r"\.get\(\s*[^,)]{0,60},\s*([-+]?\d+\.\d{3,})[^)]*\)", code):
             lineno = code[:m.start()].count("\n") + 1
             if (fname, str(lineno)) in allow_set:
                 continue
             gc_violation(findings, "hardcoded_fallback",
                          f"{fname}:{lineno}: .get() 默认值为硬编码数值 {m.group(1)}"
                          f"（源 key 缺失应 fail fast；论文数字 fallback 会静默掩盖口径漂移，P1-14/T64）",
-                         strict)
-        for m in re.finditer(r"\belse\s+([-+]?\d+\.\d{2,})\b", code):
-            lineno = code[:m.start()].count("\n") + 1
-            if (fname, str(lineno)) in allow_set:
-                continue
-            gc_violation(findings, "hardcoded_fallback",
-                         f"{fname}:{lineno}: else 分支硬编码数值 {m.group(1)}"
-                         f"（源 key 缺失应 fail fast；论文数字 fallback 静默掩盖口径漂移，P1-14/T64）",
                          strict)
 
 

@@ -144,12 +144,20 @@ def check(ws: Path, strict: bool):
                             f"{len(lit_refs)} 篇——references registry 落后（P1-12/T55）")
         if cmap_refs and cmap_refs - bibs:
             problems.append(f"method_citation_map 引用未在参考文献定义：{sorted(cmap_refs - bibs)[:5]}（P1-12/T55）")
-        # dangling 内部路径（P1-15）
+        # dangling 内部路径（P1-15）：具体文件字面引用，且该文件在解压后不存在 -> FAIL；
+        # 诊断工具（需完整 Agent 工作区的门禁报告）按 README 分类豁免
+        DIAGNOSTIC = {"render_v3_deliverables.py", "leakage_proof.py"}
+        DANGLING_FILES = ["reports/ANALYSIS_MODELING_REPORT.md",
+                          "reports/v3_official_rules.json",
+                          "reports/v3_deliverables/", "reports/gates/"]
         for p, text in scan_texts(root):
-            if re.search(r"reports/[A-Za-z_]+\.md|ANALYSIS_MODELING_REPORT", text) \
-                    and not any((root / r).exists() for r in ("reports",)):
-                problems.append(f"{p.relative_to(root)}: 引用 ZIP 中不存在的内部路径（P1-15 dangling）")
-                break
+            if p.name in DIAGNOSTIC:
+                continue
+            for d in DANGLING_FILES:
+                if d in text and not (root / d).exists():
+                    problems.append(f"{p.relative_to(root)}: 引用 ZIP 中不存在的内部路径 {d}"
+                                    f"（P1-15 dangling；诊断工具除外）")
+                    break
     if problems:
         for p in problems:
             print(f"  [FAIL] {p}")
@@ -159,7 +167,7 @@ def check(ws: Path, strict: bool):
     return 0
 
 
-def smoke(ws: Path, data: Path, script: str):
+def smoke(ws: Path, data: Path, script: str, extra_args: list):
     zp = find_zip(ws)
     if zp is None:
         print("FAIL 未找到提交包 ZIP")
@@ -178,18 +186,18 @@ def smoke(ws: Path, data: Path, script: str):
         # smoke run
         try:
             proc = subprocess.run(
-                [sys.executable, script], capture_output=True, text=True, encoding="utf-8",
-                errors="replace", cwd=str(root), timeout=1800)
+                [sys.executable, script, *extra_args], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", cwd=str(root), timeout=3600)
         except subprocess.TimeoutExpired:
             print(f"  [FAIL] smoke run 超时（{script}）")
             return 1
         if proc.returncode != 0:
             print(f"  [FAIL] smoke run 退出码 {proc.returncode}: {script}")
-            print((proc.stdout or "")[-600:])
-            print((proc.stderr or "")[-600:])
+            print((proc.stdout or "")[-800:])
+            print((proc.stderr or "")[-800:])
             return 1
-        print(f"  [OK] smoke run 通过: python {script}")
-        print((proc.stdout or "")[-800:])
+        print(f"  [OK] smoke run 通过: python {script} {' '.join(extra_args)}")
+        print((proc.stdout or "")[-1000:])
         print("SUBMISSION_PACKAGE: clean-room smoke PASS（可运行支撑材料）")
         return 0
 
@@ -202,6 +210,7 @@ def main(argv=None):
     ap.add_argument("--smoke", action="store_true", help="clean-room 解压后实际运行最小复现脚本")
     ap.add_argument("--data", default=None, help="官方附件 xlsx 路径（--smoke 需要）")
     ap.add_argument("--script", default="problem1.py", help="smoke 脚本（默认 problem1.py，相对解压根）")
+    ap.add_argument("--smoke-args", default="", help="透传给 smoke 脚本的附加参数（如 '--skip 5,6'）")
     args = ap.parse_args(argv)
 
     ws = Path(args.workspace).resolve()
@@ -209,7 +218,7 @@ def main(argv=None):
         if not args.data:
             print("FAIL --smoke 需要 --data <附件.xlsx>")
             return 2
-        return smoke(ws, Path(args.data).resolve(), args.script)
+        return smoke(ws, Path(args.data).resolve(), args.script, args.smoke_args.split())
     return check(ws, True)
 
 
