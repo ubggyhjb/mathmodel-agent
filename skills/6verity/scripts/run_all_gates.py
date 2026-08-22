@@ -1,35 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_all_gates.py — v4 一键聚合门禁：manifest / layout / text_integrity / trace / style / decision / refs / methodology / leakage / figure_story。
+"""run_all_gates.py — v4.4 一键聚合门禁（gate registry 单一事实源驱动）。
 
-十门全部为 Python（Windows 直接运行，sys.executable + 绝对路径调用）：
-  project_manifest   --check       清单结构 + 工件哈希一致性
-  layout_gate        --strict      引擎无关排版门（PDF 共享检查 + 源适配器 + 有效字号 + 物理越界合并）
-  text_integrity     --strict      v4 文本完整门（图??/表??/悬空引用/关键词分隔/编译日志）
-  trace_numbers      --strict      论文数字 <-> 结果 JSON 双向追溯
-  style_audit        --strict      图表/排版/强调规范门（含真实摘要加粗率与附录全文）
-  check_decision_log              决策日志结构/闭环 + freshness + 阶段产物绑定（stages 来自 workflow_spec）
-  verify_refs        --strict      参考文献 OpenAlex/Crossref 核验
-  methodology        --strict      v4 Methodology（DGP/假设/删失/退化/必要性/样本量 + FINAL_MODEL_SPEC 逐问题契约）
-  leakage            --strict      v4 ML Leakage（schema 声明 + 运行时 fold provenance）
-  figure_story       --strict      v4 Figure Story（唯一 manifest + panel integrity + annotation-key + supersedes）
-
-聚合器内置 workflow_order 检查：decision_log 执行历史 vs workflow_spec.yaml（来源单一事实源）。
-验证器只读：本脚本不修改任何被验对象（decision_log / results / paper 等一律不写）。
-
-总体 PASS 硬条件（任一不满足 -> FAIL）：
-  1. 每道门退出码 0；
-  2. 每道门确实"执行"且"输入非空"：
-       layout_gate  executed=True 且 supported=True 且 coverage.source_refs=True；
-       trace_numbers summary.paper_numbers > 0（输入为空 = FAIL）；
-       style_audit  有 JSON 报告且 coverage.pdf 非零页；
-       verify_refs  有 JSON 报告；
-       manifest/decision 以退出码为准；
-       workflow_order 校验通过。
-
-输出：
-  reports/gates/gates_report.json   聚合结果
-  state/runtime_manifest.json       门禁运行记录（含输入快照 SHA256）
+执行列表完全来自 workflow_spec.yaml 的 `gates:` registry（v4.4 P0-10）：
+  每项 id/script/args/report/required/strict_aware 由该表声明；本文件只做解析与编排，
+  禁止在代码中再维护一份门禁清单（README/计数/VERIFY_SUMMARY 均由 registry 派生）。
 
 用法：
   python run_all_gates.py --workspace <项目根> [--strict] [--skip layout,refs]
@@ -67,48 +42,24 @@ def check_workflow_order(ws: Path):
     return {"ok": True, "message": f"执行历史与 workflow_spec 一致（{len(actual)} 阶段）"}
 
 
-def gate_specs(ws: Path, strict: bool, skip: set):
+def gate_specs(ws: Path, strict: bool, repo_root: Path):
+    """v4.4：从 workflow_spec.yaml 的 gates registry 解析执行列表（单一事实源）。"""
+    spec = wfs.load_spec(repo_root)
     scripts = Path(__file__).resolve().parent
-    strict_args = ["--strict"] if strict else []
-    return [
-        ("project_manifest", scripts / "project_manifest.py",
-         ["--workspace", str(ws), "--check"], None),
-        ("layout_gate", scripts / "layout_gate.py",
-         ["--workspace", str(ws), *strict_args],
-         "reports/gates/layout_gate.json"),
-        ("text_integrity", scripts / "text_integrity.py",
-         ["--workspace", str(ws), *strict_args],
-         "reports/gates/text_integrity.json"),
-        ("trace_numbers", scripts / "trace_numbers.py",
-         ["--workspace", str(ws), *strict_args], "trace_report.json"),
-        ("style_audit", scripts / "style_audit.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/style_audit.json"),
-        ("check_decision_log", scripts / "check_decision_log.py",
-         ["--workspace", str(ws)], None),
-        ("verify_refs", scripts / "verify_refs.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/references_check.json"),
-        ("methodology", scripts / "methodology_gate.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/methodology_gate.json"),
-        ("leakage", scripts / "leakage_gate.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/leakage_gate.json"),
-        ("figure_story", scripts / "figure_story.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/figure_story.json"),
-        # v4.3（§12/T65-T69）：Brainstorm 契约门——候选契约/淘汰隔离/无结论词
-        ("idea_contracts", scripts / "idea_gate.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/idea_gate.json"),
-        # v4.3（§29B/T100-T103）：视觉执行闭环门——SHA/覆盖/veto + roster drift
-        ("visual_review_gate", scripts / "visual_review_gate.py",
-         ["--workspace", str(ws), "--root", str(wfs.repo_root(Path(__file__).resolve().parent)),
-          *strict_args], "reports/gates/visual_review_gate.json"),
-        # v4.3（§25-27/T90-T94）：科学图系统门——FIGURE_SPEC/语义配色/renv/字体路径
-        ("figure_spec", scripts / "figure_spec_gate.py",
-         ["--workspace", str(ws), *strict_args], "reports/gates/figure_spec_gate.json"),
-        # v4.2（9.1/9.2）：verification 强制 substage——部署效用审计 + 提交包审计
-        ("deployment_utility", scripts / "deployment_utility.py",
-         ["--workspace", str(ws), *strict_args], "reports/deployment_utility.json"),
-        ("submission_package", scripts / "submission_package_gate.py",
-         ["--workspace", str(ws), "--check"], None),
-    ]
+    registry = wfs.gates_registry(spec)
+    if not registry:
+        raise ValueError("workflow_spec.yaml 缺 gates registry（v4.4：run_all_gates 只解析该表，"
+                         "禁止硬编码执行列表）")
+    out = []
+    for g in registry:
+        args = []
+        for a in g["args"]:
+            args.append(str(repo_root) if a == "__REPO_ROOT__" else a)
+        args = ["--workspace", str(ws), *args]
+        if g["strict_aware"] and strict:
+            args.append("--strict")
+        out.append((g["id"], scripts / g["script"], args, g["report"], g["required"]))
+    return out
 
 
 def run_gate(ws, name, script, args):
@@ -123,9 +74,9 @@ def run_gate(ws, name, script, args):
     return {"exit_code": proc.returncode, "status": status, "stdout_tail": out[-1500:]}
 
 
-def semantic_problems(name, result, ws):
+def semantic_problems(name, result, ws, gspecs):
     problems = []
-    report_rel = next((g[3] for g in gate_specs(ws, True, set()) if g[0] == name), None)
+    report_rel = next((g[3] for g in gspecs if g[0] == name), None)
     doc = gc.load_json(Path(ws) / report_rel, None) if report_rel else None
 
     if name == "layout_gate":
@@ -175,23 +126,31 @@ def main(argv=None):
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
     report_file = Path(args.report).resolve() if args.report else ws / "reports" / "gates" / "gates_report.json"
     engine = gc.manifest_engine(ws)
+    repo_root = wfs.repo_root(Path(__file__).resolve().parent)
+
+    try:
+        gspecs = gate_specs(ws, args.strict, repo_root)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 2
 
     # v4：验证器完全只读。禁止在此修改 decision_log / 任何被验对象（writer updates,
     # verifier verifies）。若 decision 门 freshness 因产物更新而 FAIL，正确动作是
     # 由写者（当前阶段）更新 decision_log.last_updated，而不是让验证器代劳。
     gates_out = {}
-    for name, script, gate_args, report_rel in gate_specs(ws, args.strict, skip):
+    for name, script, gate_args, report_rel, required in gspecs:
         if name in skip:
             gates_out[name] = {"status": "SKIPPED", "exit_code": None, "ran_at": gc.iso_now(),
-                               "report": None, "problems": []}
+                               "report": None, "problems": [], "required": required}
             continue
         print(f"==> 运行门禁: {name}（{script.name}）")
         r = run_gate(ws, name, script, gate_args)
         r["ran_at"] = gc.iso_now()
         r["report"] = report_rel
-        r["problems"] = semantic_problems(name, r, ws)
+        r["problems"] = semantic_problems(name, r, ws, gspecs)
         if r["exit_code"] != 0 or r["problems"]:
             r["status"] = "FAIL" if r["status"] == "PASS" else r["status"]
+        r["required"] = required
         gates_out[name] = r
         print(f"    exit={r['exit_code']} status={r['status']}"
               + (f" problems={r['problems']}" if r.get("problems") else ""))
@@ -201,7 +160,9 @@ def main(argv=None):
         "passed": sum(1 for g in gates_out.values() if g["status"] == "PASS"),
         "failed": sum(1 for g in gates_out.values() if g["status"] in ("FAIL", "ERROR")),
         "skipped": sum(1 for g in gates_out.values() if g["status"] == "SKIPPED"),
-        "overall": "PASS" if gates_out and all(g["status"] == "PASS" for g in gates_out.values()) else "FAIL",
+        # v4.4：SKIPPED 是可选项，不参与 PASS 判定（active 全 PASS 即 PASS）
+        "overall": "PASS" if gates_out and all(g["status"] == "PASS" for g in gates_out.values()
+                                              if g["status"] != "SKIPPED") else "FAIL",
     }
     wo = check_workflow_order(ws)
     if not wo["ok"]:

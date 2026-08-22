@@ -121,7 +121,13 @@ def paper_captions(ws: Path) -> dict:
 
 
 def normalize_caption(s: str) -> str:
-    return re.sub(r"\s+", "", str(s)).replace("图", "").replace("表", "")
+    """caption 规范化：manifest 为纯文本、paper 为 LaTeX 源——清洗数学/转义标记后比对。"""
+    s = re.sub(r"\\%", "%", s)
+    s = re.sub(r"\\pm\s*", "±", s)
+    s = re.sub(r"\\(?:mathrm|text|textbf|textit|operatorname)\s*\{([^}]*)\}", r"\1", s)
+    s = re.sub(r"\$", "", s)
+    s = re.sub(r"\\[a-zA-Z]+\s*", "", s)  # 其余 LaTeX 命令移除
+    return re.sub(r"\s+", "", s).replace("图", "").replace("表", "")
 
 
 # ---------- meta / panels / annotations ----------
@@ -176,7 +182,8 @@ def _multi_panel_signals(mcap: str, meta: dict) -> list:
     return sigs
 
 
-CLAIM_PREDICATES = {"crosses_zero", "equal_to", "gt", "lt", "within", "contains", "not_contains"}
+CLAIM_PREDICATES = {"crosses_zero", "equal_to", "gt", "lt", "within", "contains", "not_contains",
+                    "notnull"}  # v4.4：notnull = 值存在且非空（结构化绑定仍要求 result_key 真实）
 
 
 def check_structured_claims(ws: Path, item: dict, strict: bool):
@@ -193,6 +200,11 @@ def check_structured_claims(ws: Path, item: dict, strict: bool):
         if doc is not None:
             src_map.setdefault(Path(rel).stem, doc)
     for c in claims:
+        ctype = str(c.get("type", "") or "")
+        if ctype == "structural":
+            # v4.4：结构示意 claim（框架/流程/示意）无数值绑定，豁免 result_key/predicate 强制
+            # （但仍须有 claim_id 与 figure_id 关联——见 figure 级 check）
+            continue
         rk = str(c.get("result_key", "") or "")
         pred = str(c.get("predicate", "") or "")
         if "." not in rk or pred not in CLAIM_PREDICATES:
@@ -213,31 +225,41 @@ def check_structured_claims(ws: Path, item: dict, strict: bool):
                              "message": f"Figure {item.get('id')}: claim 的 result_key={rk} 在 "
                                         f"{stem} 中不存在"})
             continue
-        exp = c.get("expected")
-        ok = None
-        if pred == "crosses_zero":
-            lo = hi = None
-            if isinstance(val, dict):
-                lo = val.get("low", val.get("ci_low", val.get("lower")))
-                hi = val.get("high", val.get("ci_high", val.get("upper")))
-            elif isinstance(val, (list, tuple)) and len(val) == 2:
-                lo, hi = val[0], val[1]
-            ok = (lo is not None and hi is not None and lo < 0 < hi) == bool(exp)
-        elif pred == "equal_to":
-            ok = str(val) == str(exp)
-        elif pred == "gt":
-            ok = float(val) > float(exp)
-        elif pred == "lt":
-            ok = float(val) < float(exp)
-        elif pred == "within":
-            ok = isinstance(exp, (list, tuple)) and len(exp) == 2 and exp[0] <= float(val) <= exp[1]
-        elif pred == "contains":
-            ok = str(exp) in str(val)
-        elif pred == "not_contains":
-            ok = str(exp) not in str(val)
-        if ok is None:
-            continue  # 无法判定（类型不符）——不误报
-        if not ok:
+        if pred == "notnull":
+            # v4.4：notnull = 值存在且非空（val 已是非 None；进一步校验 bool/字符串非空）
+            ok = not (isinstance(val, (str, list, dict, tuple)) and len(val) == 0)
+            if not ok:
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_key",
+                                 "message": f"Figure {item.get('id')}: claim {rk} 命中空值（notnull 失败）"})
+                continue
+        else:
+            exp = c.get("expected")
+            ok = None
+            if pred == "crosses_zero":
+                lo = hi = None
+                if isinstance(val, dict):
+                    lo = val.get("low", val.get("ci_low", val.get("lower")))
+                    hi = val.get("high", val.get("ci_high", val.get("upper")))
+                elif isinstance(val, (list, tuple)) and len(val) == 2:
+                    lo, hi = val[0], val[1]
+                ok = (lo is not None and hi is not None and lo < 0 < hi) == bool(exp)
+            elif pred == "equal_to":
+                ok = str(val) == str(exp)
+            elif pred == "gt":
+                ok = float(val) > float(exp)
+            elif pred == "lt":
+                ok = float(val) < float(exp)
+            elif pred == "within":
+                ok = isinstance(exp, (list, tuple)) and len(exp) == 2 and exp[0] <= float(val) <= exp[1]
+            elif pred == "contains":
+                ok = str(exp) in str(val)
+            elif pred == "not_contains":
+                ok = str(exp) not in str(val)
+            if ok is None:
+                continue  # 无法判定（类型不符）——不误报
+        if pred == "notnull":
+            pass  # notnull 已在上面判定，无 expected 分支
+        if not ok and pred != "notnull":
             findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_false",
                              "message": f"Figure {item.get('id')}: claim {rk} {pred}={exp} 与结果值 "
                                         f"{str(val)[:40]} 矛盾（T50：story 与 result 不一致）"})
@@ -246,6 +268,28 @@ def check_structured_claims(ws: Path, item: dict, strict: bool):
 
 STALE_TERMS = ("插值", "interpolation", "Kaplan-Meier", "Kaplan", "Greenwood", "KM ")
 LATEST_TERMS = ("Turnbull", "区间删失", "interval-censored", "interval censored")
+
+
+# v4.4（T113）：caption 不得硬编码其它图/表的当前编号（应用 stable id + LaTeX \ref 映射）
+HARDCODED_REF_RE = re.compile(
+    r"(?:Figure\s*\d|图\s*\d+\s*的?\s*(?:A|B|C|D)?\s*面板|图\s*\d+\s*和?\s*图\s*\d)")
+
+
+def check_hardcoded_fig_refs(item, strict):
+    """v4.4（P1-10/T113）：caption/story 硬编码其它对象编号（如 'Figure 4 的 A 面板'）
+    一律 FAIL——cross-figure 引用用 stable figure id + 正文 \ref 映射当前编号。"""
+    findings = []
+    mcap = str(item.get("caption", "") or "")
+    story = str((item.get("story") or {}).get("main_message", "") or "")
+    for m in HARDCODED_REF_RE.finditer(mcap):
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "stale_fig_ref",
+                         "message": "Figure %s: caption 硬编码其它对象编号『%s』——应用 stable id + \\ref 映射（P1-10/T113）"
+                                    % (item.get("id"), m.group(0))})
+    for m in HARDCODED_REF_RE.finditer(story):
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "stale_fig_ref",
+                         "message": "Figure %s: story 硬编码其它对象编号『%s』（P1-10/T113）"
+                                    % (item.get("id"), m.group(0))})
+    return findings
 
 
 def check_stale_story(item: dict, mcap: str, strict: bool):
@@ -480,6 +524,8 @@ def main(argv=None):
         # v4.2 G-04/T50 + T51：structured claims 真值校验 + story 旧口径词
         findings.extend(check_structured_claims(ws, item, args.strict))
         findings.extend(check_stale_story(item, mcap, args.strict))
+        findings.extend(check_hardcoded_fig_refs(item, args.strict))
+        findings.extend(check_hardcoded_fig_refs(item, args.strict))
         # T37/P0-05：spec 为 interval 主口径时，正式图 caption 不得用 KM/Greenwood 表述
         spec = gc.load_json(ws / "reports" / "FINAL_MODEL_SPEC.json", None)
         interval_main = bool(spec) and any(

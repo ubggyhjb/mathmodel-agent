@@ -246,6 +246,106 @@ def gc_violation(findings, check, msg, strict):
     findings.append({"level": "FAIL" if strict else "WARN", "check": check, "message": msg})
 
 
+SELECTION_DECISION_REL = "reports/decisions/MODEL_SELECTION_DECISION.json"
+PRE_SPECIFIED_KEYS = ("pre_specified", "pre-specified", "design_selected", "design")
+# 外层测试指标语义名（家族选择场景下出现 = 用外层结果选家族）
+_OUTER_METRIC_RE = re.compile(r"\b(mean_auprc|mean_auc|mean_average_precision|mean_roc_auc)\b")
+# argmax/argmin/max(..., key=...) 在候选家族字典上选 family
+_FAMILY_SELECT_RE = re.compile(
+    r"(?:best|best_name|selected|family|winner)\s*(?:\[|\s*=\s*)"
+    r".{0,80}?(?:argmax|argmin)\s*\(.{0,120}?(?:cand|candidates|models|families)"
+    r".{0,80}?(?:key\s*=|mean_auprc|mean_auc)"
+    r"|(?:argmax|argmin|max|min)\s*\(\s*(?:cand|candidates|families)\s*,\s*key\s*=\s*lambda"
+    r".{0,160}?(?:mean_auprc|mean_auc)")
+# 代码原文命中（供 message 展示）——独立于正则判定
+_SELECT_LINE_RE = re.compile(
+    r"(?:argmax|argmin|max|min)\s*\([^)]{0,160}?(?:cand[a-z_]*|candidates|families)[^)]{0,80}?(?:mean_auprc|mean_auc|key\s*=)")
+
+
+def check_selection_semantics(ws, strict, findings):
+    """v4.4（P0-01 / T110）：决策账本声称 pre_specified（建模阶段预指定主模型家族）时，
+    runtime 执行证据必须一致，否则 FAIL——
+      1. 决策引用 before_result_artifacts 必须存在；
+      2. 结果文件必须携带显式 selection_mode=pre_specified + runtime_selection_events=[]；
+      3. runtime_selection_events 非空 -> FAIL（实际发生了运行时选择）；
+      4. 代码启发式：匹配"候选家族 + 外层测试指标(mean_auprc/mean_auc) + argmax/argmin 选 family"
+         的写法 -> FAIL（不只 regex 扫 best_name：语义字段是 FAIL 主机制，代码扫描兜底）。
+    """
+    dec = gc.load_json(ws / SELECTION_DECISION_REL, None)
+    if not isinstance(dec, dict):
+        return  # 决策缺失由 methodology 门处理
+    registry = gc.load_json(ws / "results" / "RESULT_REGISTRY.json", None) or {}
+    arts = registry.get("artifacts") or []
+    reg_by_stem = {}
+    gen_by_rel = {}
+    for a in arts:
+        if isinstance(a, dict):
+            stem = Path(str(a.get("file", ""))).stem
+            reg_by_stem[stem] = a
+            gen_by_rel[str(a.get("file", ""))] = str(a.get("generator", ""))
+    decisions = dec.get("decisions") or []
+    pre_specified_ids = []
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        rule = str(d.get("selection_rule", ""))
+        if not any(k in rule for k in PRE_SPECIFIED_KEYS):
+            continue
+        did = str(d.get("decision_id", "?"))
+        pre_specified_ids.append(did)
+        sel = str(d.get("selected", ""))
+        before = [str(r) for r in (d.get("before_result_artifacts") or [])]
+        if not before:
+            gc_violation(findings, "selection_semantics",
+                         f"{did} 声明 pre_specified 但 before_result_artifacts 为空——无法核对运行时执行", strict)
+            continue
+        runtime_evid = []
+        for rel in before:
+            doc = gc.load_json(ws / rel, None)
+            if not isinstance(doc, dict):
+                gc_violation(findings, "selection_semantics",
+                             f"{did} 引用的 {rel} 不存在——pre_specified 决策无法绑定运行时产物", strict)
+                continue
+            sm = doc.get("selection_mode")
+            rse = doc.get("runtime_selection_events")
+            fb = doc.get("family_benchmark") or {}
+            if sm is None and fb:
+                # v4.4 problem4 兼容：family_benchmark.selection_rule（顶层 selection_mode 缺失时）
+                sm = fb.get("selection_rule")
+            if sm is None:
+                continue
+            runtime_evid.append((rel, str(sm), rse))
+            if "pre_specified" not in str(sm):
+                gc_violation(findings, "selection_semantics",
+                             f"{did} 决策声明 pre_specified 但结果 {rel} 的 selection_mode={sm!r}——声明与执行矛盾（T110）",
+                             strict)
+            if rse:
+                gc_violation(findings, "selection_semantics",
+                             f"{did} 声明 pre_specified 但结果 {rel} 记录 runtime_selection_events={rse}——"
+                             f"实际发生了运行时家族选择（T110）", strict)
+        if not runtime_evid:
+            gc_violation(findings, "selection_semantics",
+                         f"{did} 声明 pre_specified（selected={sel!r}），但 {before} 均无显式 "
+                         f"selection_mode/runtime_selection_events——声明缺少执行证据（T110）", strict)
+        else:
+            findings.append({"level": "OK", "check": "selection_semantics",
+                             "message": f"{did} pre_specified 与运行时证明一致（{len(runtime_evid)} 个结果文件携带选择字段）"})
+    if not pre_specified_ids:
+        return
+    # 4) 代码启发式：pre_specified 决策存在时，任何脚本出现"候选家族+外层指标+argmax 选 family"即 FAIL
+    for fname, code in scan_code_files(ws):
+        lines = code.splitlines()
+        for i, ln in enumerate(lines, start=1):
+            if not _FAMILY_SELECT_RE.search(ln) and not _OUTER_METRIC_RE.search(ln):
+                continue
+            joined = " ".join(lines[max(0, i - 3):min(len(lines), i + 6)])
+            if _FAMILY_SELECT_RE.search(joined) and _OUTER_METRIC_RE.search(joined):
+                gc_violation(findings, "selection_semantics",
+                             f"{fname}:{i}: 疑似用外层测试指标（mean_auprc/mean_auc）对候选家族 "
+                             f"argmax/argmin 选主模型——与 pre_specified 决策矛盾（T110）", strict)
+                break
+
+
 def main(argv=None):
     gc.force_utf8()
     ap = argparse.ArgumentParser(description="v4 ML Leakage 门禁")
@@ -264,6 +364,7 @@ def main(argv=None):
         check_family_provenance(ws, fam, args.strict, findings)
     check_paper_claims(ws, args.strict, findings)
     check_runtime_audit(ws, args.strict, findings)
+    check_selection_semantics(ws, args.strict, findings)
     check_code_heuristics(ws, findings)
     check_hardcoded_fallback(ws, args.strict, findings)
 

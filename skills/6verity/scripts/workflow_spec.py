@@ -70,7 +70,30 @@ def stage_ids(spec: dict) -> list:
 
 
 def gate_ids(spec: dict) -> list:
+    """兼容层：返回 gate registry 的 id 顺序（v4.4 起 gates 为结构化对象）。"""
+    reg = spec.get("gates")
+    if isinstance(reg, list):
+        return [str(g.get("id", "")) for g in reg if isinstance(g, dict) and g.get("id")]
     return [str(g) for g in spec.get("gates_pipeline", []) if g]
+
+
+def gates_registry(spec: dict) -> list:
+    """v4.4（P0-10）：gate registry 解析——[{id, script, args, report, required, strict_aware}]。
+    缺 registry（旧 spec）时回退空列表（调用方报缺失）。"""
+    reg = spec.get("gates")
+    if not isinstance(reg, list):
+        return []
+    out = []
+    for g in reg:
+        if not isinstance(g, dict) or not g.get("id"):
+            continue
+        out.append({"id": str(g.get("id")),
+                    "script": str(g.get("script", "")),
+                    "args": list(g.get("args") or []),
+                    "report": g.get("report") or None,
+                    "required": bool(g.get("required", True)),
+                    "strict_aware": bool(g.get("strict_aware", False))})
+    return out
 
 
 # 旧阶段序列残余锚点（v3 及以前手写顺序的典型表述；出现即 FAIL）

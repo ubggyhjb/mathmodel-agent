@@ -26,6 +26,7 @@ v4.2 目标：从"工作区十门全绿"升级到"最终 ZIP 在干净机器上�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -208,6 +209,87 @@ def check_v43(ws: Path, root: Path, problems):
                                     f"文件缺 hash：{unbound[:5]}（T89）")
 
 
+def check_release_and_ledger(ws, root, problems):
+    """v4.4（P0-04/P0-05/P2-02, T121/T122）：最终发布状态硬聚合——
+    任一 required gate fails>0 -> release_ready=false -> 提交包禁止完成；
+    warning/issue ledger 必须 1:1 覆盖全部 WARN/FAIL，不得模板化销号。"""
+    vs = gc.load_json(root / "repro" / "VERIFY_SUMMARY.json", None)
+    if not isinstance(vs, dict):
+        problems.append("repro/VERIFY_SUMMARY.json 缺失——无法判定 release_ready（T121）")
+        return
+    # ---- T121：release_ready 硬判 ----
+    req_keys = ("overall", "release_ready", "gate_snapshot_sha256", "required_gates", "failed_gate_ids")
+    missing = [k for k in req_keys if vs.get(k) in (None, "", {})]
+    if missing:
+        problems.append(f"VERIFY_SUMMARY 缺 release 判定字段：{missing}——不得用"
+                        f"『reproduction_level=full』冒充发布状态（T121）")
+        return
+    failed = [str(f) for f in (vs.get("failed_gate_ids") or [])]
+    if vs.get("release_ready") is not True or vs.get("overall") != "PASS" or failed:
+        problems.append(f"release_ready 为假：overall={vs.get('overall')} "
+                        f"failed_gate_ids={failed}——ANY required gate fails>0 -> 提交包禁止完成（T121）")
+        return
+    # required_gates 全部在该文件声明过 fails==0
+    gates = vs.get("gates") or {}
+    for gid in (vs.get("required_gates") or []):
+        g = gates.get(str(gid))
+        if not isinstance(g, dict):
+            problems.append(f"VERIFY_SUMMARY required_gates 含未登记门 {gid}")
+        elif int(g.get("fails") or 0) > 0:
+            problems.append(f"required gate {gid} fails={g.get('fails')} 但 release_ready=true——"
+                            f"聚合器读了不同 snapshot（P2-02/T121）")
+    # ---- T122：ledger 1:1（无 issue 的干净包允许无 ledger 或空 ledger）----
+    ledger = gc.load_json(root / "repro" / "warning_ledger.json", None)
+    issue_ids = vs.get("issue_ids") or []
+    if not isinstance(issue_ids, list):
+        problems.append("VERIFY_SUMMARY 缺 issue_ids（WARN/FAIL 1:1 汇总）——无法核对 ledger 覆盖（T122）")
+        return
+    if not ledger and not issue_ids:
+        findings_ok = True
+        return
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("warnings"), list):
+        problems.append("repro/warning_ledger.json 缺失——WARN/FAIL issue 不可见（T122）")
+        return
+    entries = ledger["warnings"]
+    # 1: 覆盖：VERIFY_SUMMARY.issue_ids（build 时从门禁报告 1:1 汇总）全部在 ledger
+    ledger_ids = {str(e.get("issue_id") or e.get("id")): e for e in entries if isinstance(e, dict)}
+    missing_ids = [i for i in issue_ids if i not in ledger_ids]
+    if missing_ids:
+        problems.append(f"ledger 未覆盖 {len(missing_ids)} 个 issue：{missing_ids[:5]}——"
+                        f"must 1:1（T122）")
+        return
+    # 2: 不多报
+    extra = [i for i in ledger_ids if i not in set(issue_ids)]
+    if extra:
+        problems.append(f"ledger 多报 {len(extra)} 个 issue：{extra[:5]}（T122）")
+        return
+    # 3: 模板化销号：>50% 条目同一 reason -> FAIL
+    from collections import Counter
+    reasons = [str(e.get("reason", "")) for e in entries if isinstance(e, dict)]
+    if reasons:
+        top = Counter(reasons).most_common(1)[0]
+        if top[1] > max(1, len(reasons) // 2):
+            problems.append(f"ledger 中 {top[1]}/{len(reasons)} 条使用同一通用理由 "
+                            f"『{top[0][:40]}……』——批量模板化销号不是证据（T122）")
+    # 4: 每条必须有 message_sha256（可追溯）
+    no_hash = [i for i, e in ledger_ids.items() if not e.get("message_sha256")]
+    if no_hash:
+        problems.append(f"ledger 缺 message_sha256（{len(no_hash)} 条）：{no_hash[:5]}——"
+                        f"issue 不可追溯（T122）")
+    # 5: FAIL 不允许 accepted_with_reason 直接绕过（policy waiver 需签署依据）
+    for i, e in ledger_ids.items():
+        if str(e.get("severity", "")) == "FAIL" and str(e.get("status", "")) in ("accepted_with_reason", "accepted"):
+            problems.append(f"ledger issue {i} 为 FAIL 却 accepted_with_reason——"
+                            f"FAIL 必须 fixed 或 policy waiver 有签署人/规则依据（T122）")
+    # 6: open_p01 从明细重算（不能手填）
+    real_open = sum(1 for e in entries if isinstance(e, dict)
+                    and str(e.get("status")) == "open"
+                    and re.search(r"\b(P0|P1|FAIL)\b", str(e.get("severity", "")) + str(e.get("id", ""))))
+    if int(ledger.get("open_p01") or 0) != real_open:
+        problems.append(f"ledger.open_p01={ledger.get('open_p01')} 与明细重算 {real_open} 不一致——"
+                        f"必须从 issue 明细重算（P0-05/T122）")
+
+
 def check(ws: Path, strict: bool):
     problems = []
     zp = find_zip(ws)
@@ -302,6 +384,10 @@ def check(ws: Path, strict: bool):
                     break
         # v4.3（§10/P0-07, T82-T89）：support registry 语义一致性
         check_v43(ws, root, problems)
+        # v4.4（P0-06/P2-01/T123）：payload manifest + sidecar 两层完整性
+        check_manifest_integrity(ws, root, zp, problems)
+        # v4.4（P0-04/P0-05/T121/T122）：release_ready 硬判 + ledger 1:1
+        check_release_and_ledger(ws, root, problems)
     if problems:
         for p in problems:
             print(f"  [FAIL] {p}")
@@ -346,30 +432,114 @@ def smoke(ws: Path, data: Path, script: str, extra_args: list):
         return 0
 
 
+def _payload_sha(payload: dict) -> str:
+    """canonical payload sha：剔除自引用字段后按 sort_keys dumps 计算（可复验）。"""
+    body = {k: v for k, v in payload.items() if k != "payload_manifest_sha256"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 def build_manifest(zp: Path, out: Path):
-    """v4.3（P1-08）：从最终 ZIP 自动构建 SUBMISSION_MANIFEST.json（论文 Appendix A 由此生成）。"""
+    """v4.4（P0-06/P2-01/T123）：两层完整性——
+    ZIP 内部 payload manifest（每文件 size+sha256，canonical payload_manifest_sha256 自校验，
+    不含最终 ZIP SHA 自引用；manifest 自身不进 files 列表）；ZIP 外部 sidecar（<zip>.sha256）
+    记录最终（追加 manifest 后）ZIP SHA。论文附录 A 由本 manifest 生成（与 ZIP 内容 1:1）。"""
     categories = {"code": "source", "results": "authority_results", "figures": "publication_figures",
                   "references": "references", "styles": "styles", "repro": "provenance",
                   "R": "r_source", "data": "input_data", "paper": "paper_source"}
+    MANIFEST_REL = "repro/SUBMISSION_MANIFEST.json"
     with zipfile.ZipFile(zp) as z:
-        names = z.namelist()
+        names = [n for n in z.namelist() if n != MANIFEST_REL]
+        files = []
+        for n in names:
+            try:
+                data = z.read(n)
+                files.append({"path": n, "size": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest()})
+            except Exception:
+                files.append({"path": n, "size": None, "sha256": None})
     top = sorted({n.split("/")[0] for n in names if "/" in n and not n.startswith("__")})
     cats = [{"path": c, "role": categories.get(c, "other")} for c in top]
-    files = [{"path": n, "size": 0} for n in names]
-    man = {
-        "schema_version": 1,
-        "package_sha256": gc.sha256_file(zp),
-        "package_files": len(names),
+    payload = {
+        "schema_version": 2,
+        "package_files": len(files),
         "categories": cats,
         "files": files,
-        "built_at": gc.iso_now(),
-        "note": "由 submission_package_gate --build-manifest 从最终 ZIP 自动生成；论文附录 A 必须与本文件一致（T83）。",
+        "note": ("v4.4 两层完整性：本文件为 payload manifest（每文件 size+sha256，不含自身）；"
+                 "最终 ZIP 的 SHA 记录在 ZIP 外 sidecar（<zip名>.sha256）——"
+                 "把容器 SHA 写进容器自身存在自引用悖论（P0-06）。"),
     }
+    payload["payload_manifest_sha256"] = _payload_sha(payload)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 把 manifest 追加进 ZIP（manifest 自身不在 files 集合内），随后计算最终 ZIP SHA -> sidecar
+    with zipfile.ZipFile(zp, "a", zipfile.ZIP_DEFLATED) as z:
+        z.write(out, MANIFEST_REL)
+    side = zp.with_suffix(zp.suffix + ".sha256")
+    zip_sha = gc.sha256_file(zp)
+    side.write_text(f"{zip_sha}  {zp.name}\nmanifest:{payload['payload_manifest_sha256']}\n",
+                    encoding="utf-8")
     print(f"SUBMISSION_MANIFEST: {len(files)} 文件 / {len(cats)} 类别 -> {out}")
-    print(f"  categories: {[c['path'] for c in cats]}")
+    print(f"  payload_manifest_sha256: {payload['payload_manifest_sha256'][:16]}…")
+    print(f"  sidecar: {side.name}（ZIP SHA={zip_sha[:16]}…）")
     return 0
+
+
+def check_manifest_integrity(ws: Path, root: Path, zp: Path, problems):
+    """v4.4（P0-06/P2-01/T123）：payload manifest 真实性 + sidecar 一致性。"""
+    man = gc.load_json(root / "repro" / "SUBMISSION_MANIFEST.json", None)
+    if not isinstance(man, dict):
+        problems.append("repro/SUBMISSION_MANIFEST.json 缺失——提交包无 payload manifest（P0-06/T123）")
+        return
+    if "package_sha256" in man:
+        problems.append("manifest 携带 package_sha256（最终 ZIP 自引用）——旧版自引用设计，必须重建为"
+                        " payload manifest + 外部 sidecar（P0-06/T123）")
+    payload_sha_decl = str(man.get("payload_manifest_sha256", "") or "")
+    recomputed = _payload_sha(man)
+    if not payload_sha_decl or payload_sha_decl != recomputed:
+        problems.append(f"payload_manifest_sha256 自校验失败：declared={payload_sha_decl[:16]} "
+                        f"recomputed={recomputed[:16]}——manifest 被篡改或非 canonical（T123）")
+    # 与 ZIP 实际 1:1（文件数 + 每文件 size/sha；manifest 自身不在 files 集合内）
+    with zipfile.ZipFile(zp) as z:
+        names = [n for n in z.namelist() if n != "repro/SUBMISSION_MANIFEST.json"]
+    files = man.get("files") or []
+    by_path = {str(f.get("path", "")): f for f in files if isinstance(f, dict)}
+    if set(by_path) != set(names):
+        problems.append(f"manifest 文件集合与 ZIP 不一致：manifest {len(by_path)} vs ZIP {len(names)}"
+                        f"（差异：{sorted(set(names) - set(by_path))[:4]} / "
+                        f"{sorted(set(by_path) - set(names))[:4]}）（P0-06/T123）")
+        return
+    bad = []
+    with zipfile.ZipFile(zp) as z:
+        for n in names:
+            f = by_path[n]
+            try:
+                data = z.read(n)
+            except Exception:
+                bad.append((n, "unreadable"))
+                continue
+            if f.get("size") is not None and f.get("size") != len(data):
+                bad.append((n, f"size {f['size']} != {len(data)}"))
+            elif f.get("sha256") and f.get("sha256") != hashlib.sha256(data).hexdigest():
+                bad.append((n, "sha mismatch"))
+    if bad:
+        problems.append(f"payload manifest 与 ZIP 实测不一致（{len(bad)} 文件）：{bad[:5]}（P0-06）")
+    else:
+        print(f"  [OK] payload manifest 与 ZIP 1:1 一致（{len(names)} 文件 size+sha 全对）")
+    # sidecar
+    side = zp.with_suffix(zp.suffix + ".sha256")
+    if side.is_file():
+        txt = side.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"([0-9a-f]{64})\s+", txt)
+        if not m:
+            problems.append(f"sidecar {side.name} 格式非法（缺 64 位 hex ZIP SHA）")
+        elif m.group(1) != gc.sha256_file(zp):
+            problems.append(f"sidecar ZIP SHA（{m.group(1)[:16]}…）≠ 实际 ZIP SHA（"
+                            f"{gc.sha256_file(zp)[:16]}…）——最终容器被改动（P0-06/T123）")
+        else:
+            print(f"  [OK] sidecar ZIP SHA 一致：{m.group(1)[:16]}…")
+    else:
+        problems.append(f"缺 ZIP 外部 sidecar（{side.name}）——最终 ZIP SHA 必须写在 ZIP 外（P0-06）；"
+                        f"若竞赛流程不允许 sidecar，至少保留 payload manifest 且不得声称容器 SHA")
 
 
 def main(argv=None):

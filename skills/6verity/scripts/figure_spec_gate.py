@@ -136,6 +136,104 @@ def check_abs_font_paths(ws, strict, findings):
         findings.append(_ok("abs_font_path", "无本机字体绝对路径引用（字体经系统探测）"))
 
 
+def check_render_provenance(ws, strict, findings):
+    """v4.4（P1-17 / T118）：declared renderer 必须由 RENDER_PROVENANCE 执行证据证明。
+    - 声明 renderer=r_ggplot2 的图必须在 repro/RENDER_PROVENANCE.json 有 entry；
+    - renderer_declared 必须与 FIGURE_SPEC 一致；
+    - renderer_actual != renderer_declared 时：fallback_used=true + fallback_reason 必填（WARN）；
+      若同时仍声称"正式 R 渲染"（manifest note）-> FAIL；
+    - 无 RENDDER_PROVENANCE 文件 -> FAIL（声明无执行证据）。"""
+    prov = gc.load_json(ws / "repro" / "RENDER_PROVENANCE.json", None)
+    manifest = gc.load_json(ws / MANIFEST_REL, None) or []
+    specs_dir = ws / SPECS_DIR
+    r_figs = []
+    for m in manifest:
+        if not isinstance(m, dict):
+            continue
+        fid = str(m.get("id", ""))
+        spec = gc.load_json(specs_dir / f"{fid}.figure.json", None)
+        if isinstance(spec, dict) and str(spec.get("renderer", "")) == "r_ggplot2":
+            r_figs.append((fid, m))
+    if not r_figs:
+        return
+    if not isinstance(prov, dict) or not isinstance(prov.get("entries"), list):
+        _violation(findings, "render_provenance",
+                   f"存在 {len(r_figs)} 张声明 r_ggplot2 的图但无 repro/RENDER_PROVENANCE.json——"
+                   f"declared renderer 无执行证据（P1-17/T118）", strict)
+        return
+    entries = {str(e.get("figure_id", "")): e for e in prov["entries"] if isinstance(e, dict)}
+    for fid, m in r_figs:
+        e = entries.get(fid)
+        if not isinstance(e, dict):
+            _violation(findings, "render_provenance",
+                       f"图 {fid} 声明 renderer=r_ggplot2 但 RENDER_PROVENANCE 无 entry——未记录实际渲染器（T118）",
+                       strict)
+            continue
+        declared = str(e.get("renderer_declared", ""))
+        actual = str(e.get("renderer_actual", ""))
+        fallback = bool(e.get("fallback_used"))
+        reason = str(e.get("fallback_reason", "") or "")
+        spec = gc.load_json(specs_dir / f"{fid}.figure.json", None)
+        spec_renderer = str((spec or {}).get("renderer", ""))
+        if declared != spec_renderer:
+            _violation(findings, "render_provenance",
+                       f"图 {fid} RENDER_PROVENANCE.renderer_declared={declared!r} 与 FIGURE_SPEC "
+                       f"renderer={spec_renderer!r} 不一致（P1-17）", strict)
+        if actual != declared:
+            if not fallback:
+                _violation(findings, "render_provenance",
+                           f"图 {fid} renderer_actual={actual!r} != declared={declared!r} 且 "
+                           f"fallback_used 未置位——渲染器静默切换（T118）", strict)
+            else:
+                if not reason:
+                    _violation(findings, "render_provenance",
+                               f"图 {fid} fallback 但无 fallback_reason——必须显式记录（P1-17）", strict)
+                else:
+                    note_txt = str(m.get("note", "")) + str((spec or {}).get("note", ""))
+                    if re.search(r"R/ggplot2 渲染|正式渲染器为 R|renderer= r_ggplot2", note_txt):
+                        _violation(findings, "render_provenance",
+                                   f"图 {fid} 实际 fallback（{reason}）但 manifest/spec 仍声称 R 渲染——"
+                                   f"声明与执行矛盾（P1-17）", strict)
+                    findings.append(_warn("render_provenance",
+                                          f"图 {fid} 实际 renderer={actual}（fallback: {reason}）——"
+                                          f"R 路由未验证，显式记录"))
+        else:
+            findings.append(_ok("render_provenance", f"图 {fid} declared==actual=={declared}（执行证据一致）"))
+
+
+def check_claim_ids_resolve(ws, strict, findings):
+    """v4.4（P1-14）：FIGURE_SPEC.claim_id 与 CLAIM_PROVENANCE（统一 Claim Registry）互通。
+    任一 spec 的 claim_id 在 registry 无对应 claim -> FAIL；claim 的 claim_id 必须对应已知 spec（防悬空）。"""
+    prov = gc.load_json(ws / "repro" / "CLAIM_PROVENANCE.json", None)
+    if not isinstance(prov, dict) or not isinstance(prov.get("claims"), list):
+        _violation(findings, "claim_registry",
+                   "缺 repro/CLAIM_PROVENANCE.json——统一 Claim Registry 未建立，FigureSpec claim_id 无法 resolve（P1-14）",
+                   strict)
+        return
+    reg_ids = {str(c.get("claim_id", "")) for c in prov["claims"] if isinstance(c, dict)}
+    specs_dir = ws / SPECS_DIR
+    if not specs_dir.is_dir():
+        return
+    for p in sorted(specs_dir.glob("*.figure.json")):
+        spec = gc.load_json(p, None)
+        if not isinstance(spec, dict):
+            continue
+        cid = str(spec.get("claim_id", "") or "")
+        if not cid:
+            continue
+        if cid not in reg_ids:
+            _violation(findings, "claim_registry",
+                       f"{p.name} 的 claim_id={cid} 在 CLAIM_PROVENANCE 无对应 claim——"
+                       f"FigureSpec 与 ClaimRegistry 未连接（P1-14）", strict)
+    for cid in reg_ids:
+        if cid.endswith(".CLAIM"):
+            # 兜底 ID 体系（无 spec 的旧图）不再允许：spec 已补全后 .CLAIM 应为 0
+            _violation(findings, "claim_registry",
+                       f"claim_id={cid} 为兜底编号——未与 FIGURE_SPEC 统一 ID 体系连接（P1-14）", strict)
+    if reg_ids:
+        findings.append(_ok("claim_registry", f"claim registry {len(reg_ids)} 个 claim_id 与 FIGURE_SPEC 互通"))
+
+
 def main(argv=None):
     gc.force_utf8()
     ap = argparse.ArgumentParser(description="v4.3 Scientific Figure System 门禁")
@@ -147,6 +245,8 @@ def main(argv=None):
     ws = Path(args.workspace).resolve()
     findings = []
     check_figure_specs(ws, args.strict, findings)
+    check_render_provenance(ws, args.strict, findings)
+    check_claim_ids_resolve(ws, args.strict, findings)
     check_abs_font_paths(ws, args.strict, findings)
 
     fails = [f for f in findings if f["level"] == "FAIL"]

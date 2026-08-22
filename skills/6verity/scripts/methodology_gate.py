@@ -36,6 +36,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import gate_common as gc
@@ -819,6 +820,157 @@ def check_assumption_claims(spec, ws, text, findings, strict):
                    f"untestable_from_provided_data 不得写「经验证成立」（T81）", strict)
 
 
+def check_baseline_protocol(ws, spec, text, findings, strict):
+    """v4.4（P1-01 / T111）：baseline 超参协议必须"论文-代码-契约"三处一致。
+    - 触发：存在家族对比（决策 pre_specified 或结果带 family_benchmark）时；
+    - 协议：family_benchmark.baseline_hyperparameter_protocol（rf/gbdt 各一条，明确 inner_tuned 或 fixed）；
+    - 代码含 GridSearchCV 调 baseline 超参 -> 协议必须内层调优声明（否则 FAIL）；
+    - 论文把 baseline 写成"固定/默认"且协议为 inner 调优 -> FAIL（P1-01 核心矛盾）。"""
+    has_family = False
+    for p in (spec or {}).get("problems") or []:
+        if isinstance(p, dict) and isinstance(p.get("model"), dict):
+            if str(p.get("model", {}).get("family", "")) in ("logistic_regression", "lr"):
+                has_family = True
+    if not has_family:
+        return
+    # 1) 结果中的协议（problem4 输出 family_benchmark.baseline_hyperparameter_protocol）
+    results_dir = ws / "results"
+    protocol = None
+    proto_file = None
+    if results_dir.is_dir():
+        for p in sorted(results_dir.glob("*.json")):
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(doc, dict):
+                continue
+            fb = doc.get("family_benchmark") or {}
+            if isinstance(fb, dict) and isinstance(fb.get("baseline_hyperparameter_protocol"), dict):
+                protocol = fb["baseline_hyperparameter_protocol"]
+                proto_file = p.name
+                break
+    exp_keys = ("rf", "gbdt") if protocol else ()
+    if protocol is None:
+        _violation(findings, "baseline_protocol",
+                   "存在多家族对比（LR 主模型 + RF/GBDT 基准）但结果无 "
+                   "family_benchmark.baseline_hyperparameter_protocol——baseline 超参协议未登记（P1-01）",
+                   strict)
+    else:
+        missing_keys = [k for k in exp_keys if k not in protocol or not str(protocol.get(k, "")).strip()]
+        if missing_keys:
+            _violation(findings, "baseline_protocol",
+                       f"{proto_file} 的 baseline_hyperparameter_protocol 缺 {missing_keys}——"
+                       f"基准超参协议不完整（P1-01）", strict)
+        tuned = bool(re.search(r"(调优|tun|inner|GridSearch|nested)", json.dumps(protocol, ensure_ascii=False)))
+        fixed = bool(re.search(r"(固定|fixed|默认)", json.dumps(protocol, ensure_ascii=False)))
+        # 2) 代码含 GridSearchCV 调 baseline -> 协议必须调优声明
+        grid_in_code = False
+        code_dir = ws / "code"
+        if code_dir.is_dir():
+            for p in sorted(code_dir.rglob("*.py")):
+                try:
+                    c = p.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if re.search(r"GridSearchCV\s*\([^)]{0,200}?(max_depth|n_estimators|learning_rate)", c):
+                    grid_in_code = True
+                    break
+        if grid_in_code and not tuned:
+            _violation(findings, "baseline_protocol",
+                       f"代码对 baseline 超参做 GridSearchCV 调优，但 {proto_file} 协议未声明内层调优——"
+                       f"论文不得写『参数固定』（P1-01）", strict)
+        # 3) 论文把 baseline 写成固定/默认 + 协议内层调优 -> 矛盾
+        if tuned and re.search(r"(随机森林|RF)[^。（）]{0,80}(固定|默认|预置)[^。（）]{0,60}(树|深度|参数)", text):
+            _violation(findings, "baseline_protocol",
+                       "论文将 RF baseline 超参写为『固定/默认』，但协议登记为 inner CV 调优——"
+                       "二者矛盾（P1-01/T111）；应统一为『baseline 自身超参在 outer-train 内 inner CV 调优，"
+                       "不参与 family selection』", strict)
+        if protocol is not None and not tuned and not fixed:
+            _violation(findings, "baseline_protocol",
+                       f"{proto_file} 的 baseline_hyperparameter_protocol 未声明 tuned/fixed——语义模糊（P1-01）",
+                       strict)
+        if protocol is not None and (tuned or fixed):
+            findings.append(_ok("baseline_protocol",
+                                f"baseline 超参协议已登记（{'inner-tuned' if tuned else 'fixed'}）且与代码一致"))
+
+
+def check_temporal_integrity(ws, findings, strict):
+    """v4.4（P0-07 / T123 / G5）：时间 provenance 完整性。
+    - 收集 provenance 类 JSON 的全部时间字段（键名以 _at 结尾且为 ISO 时间/ISO 前缀）；
+    - 任一时间 > now + 容差(5min) -> FAIL（未来时间戳 = 手填伪造）；
+    - MODEL_SELECTION_DECISION 声明 prospective 但无不可变证据（commit 引用/不可变哈希）
+      -> FAIL；reconstructed_posthoc 必须显式标注（缺 evidence_type 的 pre-spec 决策 -> WARN/FAIL）。
+    """
+    now = datetime.now(timezone(timedelta(hours=8)))
+    TIME_KEYS = re.compile(r"(generated_at|recorded_at|created_at|event_at|frozen_at|updated_at|approved_at|running_at|reviewed_at|fixed_at|modified_at|attested_at)", re.I)
+    ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+    targets = [
+        ws / "reports" / "FINAL_MODEL_SPEC.json",
+        ws / "reports" / "decisions" / "MODEL_SELECTION_DECISION.json",
+        ws / "repro" / "CLAIM_PROVENANCE.json",
+        ws / "repro" / "RENDER_PROVENANCE.json",
+        ws / "repro" / "VERIFY_SUMMARY.json",
+        ws / "repro" / "AI_USE_PROVENANCE.json",
+        ws / "repro" / "warning_ledger.json",
+        ws / "reports" / "page_visual_review.json",
+    ]
+    future = []
+    scanned = 0
+
+    def walk(o, path):
+        nonlocal scanned
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if TIME_KEYS.search(str(k)) and isinstance(v, str) and ISO_RE.match(v):
+                    scanned += 1
+                    try:
+                        t = datetime.fromisoformat(v)
+                        if t > now + timedelta(minutes=5):
+                            future.append((f"{path}.{k}", v))
+                    except Exception:
+                        continue
+                walk(v, f"{path}.{k}")
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, f"{path}[{i}]")
+
+    for p in targets:
+        if p.is_file():
+            try:
+                walk(json.loads(p.read_text(encoding="utf-8")), p.name)
+            except Exception:
+                continue
+    if future:
+        _violation(findings, "temporal",
+                   f"发现 {len(future)} 个未来时间戳（手填/复制产生）："
+                   f"{[(f[0], f[1]) for f in future[:8]]}——recorded_at 必须由系统时钟生成（P0-07/T123）",
+                   strict)
+    else:
+        findings.append(_ok("temporal", f"时间完整性通过：扫描 {scanned} 个时间字段，无未来时间戳"))
+    # prospective 声明必须不可变证据
+    dec = gc.load_json(ws / "reports" / "decisions" / "MODEL_SELECTION_DECISION.json", None)
+    if isinstance(dec, dict):
+        for d in dec.get("decisions") or []:
+            if not isinstance(d, dict):
+                continue
+            dct = str(d.get("decision_type", "")) + str(d.get("selection_rule", ""))
+            if d.get("evidence_type") in (None, ""):
+                if "pre_specified" in dct:
+                    _violation(findings, "temporal",
+                               f"{d.get('decision_id')} 声称 pre_specified 但未标注 evidence_type——"
+                               f"预指定必须 proven 或显式 reconstructed_posthoc（P0-07）", strict)
+                else:
+                    findings.append(_warn("temporal",
+                                          f"{d.get('decision_id')} 未标注 evidence_type（默认重建/事后记录）"))
+            elif str(d.get("evidence_type")) == "prospective" and not (
+                    d.get("evidence_refs") or d.get("commit_ref") or d.get("hash_proof")):
+                _violation(findings, "temporal",
+                           f"{d.get('decision_id')} 标注 prospective 但无可复验证据"
+                           f"（evidence_refs/commit_ref/hash_proof）——不得声称机器证明的预指定（P0-07）",
+                           strict)
+
+
 def conditional_required_inputs(dgp, spec, mdir, strict, findings):
     """v4（任务书 6 条）：方法学输入条件必需（适用就硬 FAIL，不适用不机械要求）。
        - DGP 存在删除失      -> censoring_report.json 必须存在；
@@ -947,6 +1099,10 @@ def main(argv=None):
     check_score_semantics(spec, text, findings, args.strict)
     # v4.3（§9/T81）：不可验证假设不得写"经验证成立"
     check_assumption_claims(spec, ws, text, findings, args.strict)
+    # v4.4（P1-01/T111）：baseline 超参协议 论文-代码-契约 一致性
+    check_baseline_protocol(ws, spec, text, findings, args.strict)
+    # v4.4（P0-07/T123）：时间 provenance 完整性——未来时间戳/伪造预指定
+    check_temporal_integrity(ws, findings, args.strict)
     # v4.3（§16/§18）：failure-driven rollback——未关闭的 BLOCKER/CRITICAL 阻止 PASS
     check_failure_events(ws, findings, args.strict)
 

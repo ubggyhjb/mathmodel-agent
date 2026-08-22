@@ -77,12 +77,39 @@ def main(argv=None):
                     help="逗号分隔的本次变更图 stem（changed figures 全审）；缺省 = primary 图全审")
     ap.add_argument("--triplets", default="",
                     help="v4.3（§29B.2）：逗号分隔的候选异常页——为每页渲染 N-1/N/N+1 三页上下文 PNG 到 reports/visual/triplets/")
+    ap.add_argument("--emit-page-records", action="store_true",
+                    help="v4.4（§4.2）：按当前 PDF 页数生成 page_records 骨架"
+                         "（reports/visual/page_records.scaffold.json；Reviewer C 在骨架中标注问题页/verdict，"
+                         "coverage 由 gate 从记录计算，不再用 self-declared boolean）")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args(argv)
 
     ws = Path(args.workspace).resolve()
     if args.check:
         return check(ws, True)
+    if args.emit_page_records:
+        pdf = ws / "paper" / "main.pdf"
+        if not pdf.is_file():
+            print("FAIL 找不到 PDF")
+            return 2
+        import fitz as _fitz
+        with _fitz.open(str(pdf)) as d:
+            n = d.page_count
+        out_dir = ws / "reports" / "visual"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        scaffold = {
+            "schema_version": 2,
+            "reviewed_pdf_sha256": sha256_file(pdf),
+            "expected_pages": n,
+            "page_records": [{"page": i, "verdict": "OK", "checks": [], "issues": []}
+                             for i in range(1, n + 1)],
+            "note": "v4.4：page_records 骨架（每页 verdict/checks/issues）；Reviewer C 逐页标注后写入 "
+                    "reports/page_visual_review.json；coverage 由 gate 从 records 计算（§4.2/T115）。",
+        }
+        out = out_dir / "page_records.scaffold.json"
+        out.write_text(json.dumps(scaffold, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"PAGE_RECORDS: {n} 页骨架 -> {out.relative_to(ws)}（SHA={sha256_file(pdf)[:12]}）")
+        return 0
 
     try:
         import fitz

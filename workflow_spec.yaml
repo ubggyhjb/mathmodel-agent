@@ -94,21 +94,107 @@ stages:
     gate: run_all_gates
     purpose: "v4.1（R-02）：验证器输入=论文/结果/图/清单/契约/方法学 JSON——不得把自产的 gates_report 当输入（无自输入循环）；输出门禁报告与验收报告"
 
-gates_pipeline:
-  # run_all_gates.py 的执行顺序（也是 README/文档中的门禁清单事实源）
-  - manifest
-  - layout
-  - text_integrity
-  - trace
-  - style
-  - decision
-  - refs
-  - methodology
-  - leakage
-  - figure_story
-  - idea_contracts
-  - visual_review_gate
-  - figure_spec
+gates:
+  # v4.4（P0-10/§7）：gate registry 单一事实源——run_all_gates.py 只解析本表，
+  # README/计数/VERIFY_SUMMARY 均由它派生；禁止在别处再维护一份执行列表。
+  # 字段：id / script（相对 skills/6verity/scripts/）/ args（静态部分；--workspace 与
+  # --strict 由 runner 注入）/ report（相对 workspace 的报告路径，null=无）/ required / strict_aware
+  - id: manifest
+    script: project_manifest.py
+    args: ["--check"]
+    report: null
+    required: true
+    strict_aware: false
+  - id: layout
+    script: layout_gate.py
+    args: []
+    report: reports/gates/layout_gate.json
+    required: true
+    strict_aware: true
+  - id: text_integrity
+    script: text_integrity.py
+    args: []
+    report: reports/gates/text_integrity.json
+    required: true
+    strict_aware: true
+  - id: trace
+    script: trace_numbers.py
+    args: []
+    report: trace_report.json
+    required: true
+    strict_aware: true
+  - id: style
+    script: style_audit.py
+    args: []
+    report: reports/gates/style_audit.json
+    required: true
+    strict_aware: true
+  - id: decision
+    script: check_decision_log.py
+    args: []
+    report: null
+    required: true
+    strict_aware: false
+  - id: refs
+    script: verify_refs.py
+    args: []
+    report: reports/gates/references_check.json
+    required: true
+    strict_aware: true
+  - id: methodology
+    script: methodology_gate.py
+    args: []
+    report: reports/gates/methodology_gate.json
+    required: true
+    strict_aware: true
+  - id: leakage
+    script: leakage_gate.py
+    args: []
+    report: reports/gates/leakage_gate.json
+    required: true
+    strict_aware: true
+  - id: figure_story
+    script: figure_story.py
+    args: []
+    report: reports/gates/figure_story.json
+    required: true
+    strict_aware: true
+  - id: idea_contracts
+    script: idea_gate.py
+    args: []
+    report: reports/gates/idea_gate.json
+    required: true
+    strict_aware: true
+  - id: visual_review_gate
+    script: visual_review_gate.py
+    args: ["--root", "__REPO_ROOT__"]
+    report: reports/gates/visual_review_gate.json
+    required: true
+    strict_aware: true
+  - id: figure_spec
+    script: figure_spec_gate.py
+    args: []
+    report: reports/gates/figure_spec_gate.json
+    required: true
+    strict_aware: true
+  - id: deployment_utility
+    script: deployment_utility.py
+    args: []
+    report: reports/deployment_utility.json
+    required: true
+    strict_aware: true
+  - id: submission_package
+    script: submission_package_gate.py
+    args: ["--check"]
+    report: null
+    required: true
+    strict_aware: false
+  - id: schema_validation
+    script: schema_validator.py
+    args: []
+    report: reports/gates/schema_validation.json
+    required: true
+    strict_aware: true
 
 final_review:
   personas:

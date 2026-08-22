@@ -78,7 +78,7 @@ def check_visual_execution(ws, strict, findings):
                    f"visual_review.json 绑定 SHA {bound_sha[:12]} 与当前 PDF {cur_sha[:12]} 不一致——"
                    f"评审材料对应旧版 PDF（§29B.3/T100）", strict)
         return
-    # T100：缺 page_visual_review 或 coverage 不完整 -> FAIL
+    # T100：缺 page_visual_review 或覆盖不完整 -> FAIL
     if pr is None:
         _violation(findings, "visual_execution",
                    "visual_review.json SHA 与当前 PDF 一致，但 reports/page_visual_review.json 缺失——"
@@ -88,39 +88,85 @@ def check_visual_execution(ws, strict, findings):
         _violation(findings, "visual_execution",
                    f"page_visual_review.json 绑定 SHA {str(pr.get('reviewed_pdf_sha256'))[:12]} "
                    f"与当前 PDF 不一致——重编译后旧评审自动 stale（§29B/T100）", strict)
-    exp = int(pr.get("expected_pages", 0) or 0)
+    # ---- v4.4（§4.1/4.2）：精确页面集合 + gate 计算 coverage（不再读 self-declared boolean）----
     reviewed = sorted({int(x) for x in (pr.get("reviewed_pages") or [])})
-    coverage = pr.get("coverage_complete")
-    if coverage is not True:
+    expected = list(range(1, cur_pages + 1))
+    if reviewed != expected:
         _violation(findings, "visual_coverage",
-                   "page_visual_review.json coverage_complete 非 true——视觉评审未完整覆盖（T100）", strict)
-    if exp and len(reviewed) != exp:
+                   f"reviewed_pages 集合不精确：缺 {sorted(set(expected) - set(reviewed))[:8]}"
+                   f" / 多 {sorted(set(reviewed) - set(expected))[:8]}——必须逐页 1..{cur_pages}（T101）",
+                   strict)
+    elif int(pr.get("expected_pages", 0) or 0) != cur_pages:
         _violation(findings, "visual_coverage",
-                   f"page_visual_review.json expected_pages={exp} 但 reviewed_pages 实际 "
-                   f"{len(reviewed)} 页（{reviewed[:10]}{'…' if len(reviewed) > 10 else ''}）——"
-                   f"缺页/多页视为未完成逐页审（T101）", strict)
-    elif exp and exp != cur_pages:
-        _violation(findings, "visual_coverage",
-                   f"expected_pages={exp} 与当前 PDF 页数 {cur_pages} 不一致——"
+                   f"expected_pages={pr.get('expected_pages')} 与当前 PDF 页数 {cur_pages} 不一致——"
                    f"评审 scope 与交付物不对齐（T101）", strict)
-    # T102：未关闭 BLOCKER veto
+    # 逐页 record（page/verdict/checks/issues）；coverage 由 gate 从 records 计算
+    records = pr.get("page_records") or []
+    if not isinstance(records, list) or not records:
+        _violation(findings, "visual_coverage",
+                   "page_visual_review.json 无 page_records（每页 {page, verdict, checks, issues}）——"
+                   "coverage 不能由 self-declared boolean 声明，须由 gate 从逐页记录计算（§4.2/T115）",
+                   strict)
+    else:
+        rec_by_page = {}
+        for r in records:
+            if isinstance(r, dict):
+                pg = int(r.get("page", 0) or 0)
+                if pg > 0:
+                    rec_by_page.setdefault(pg, r)
+        missing_rec = [p for p in expected if p not in rec_by_page]
+        no_verdict = [p for p, r in rec_by_page.items() if not str(r.get("verdict", "")).strip()]
+        if missing_rec:
+            _violation(findings, "visual_coverage",
+                       f"page_records 缺 {len(missing_rec)} 页：{missing_rec[:10]}……——"
+                       f"coverage 由 gate 计算，缺页即 FAIL（§4.2/T115）", strict)
+        if no_verdict:
+            _violation(findings, "visual_coverage",
+                       f"page_records 有 {len(no_verdict)} 页无 verdict：{no_verdict[:8]}（T115）", strict)
+        if pr.get("coverage_complete") is not True:
+            _violation(findings, "visual_coverage",
+                       "page_visual_review.json 仍声明 coverage_complete 非 true（旧自报字段）——"
+                       "以 gate 计算的 page_records 覆盖为准，self-declared 仅作交叉核对（T100）", strict)
+    # ---- v4.4（§4.3/4.4）：结构化 resolution + MAJOR 政策 ----
     unresolved = []
+    major_open = []
     for pf in pr.get("page_findings") or []:
         if not isinstance(pf, dict):
             continue
-        sev = str(pf.get("severity", "")).strip()
-        if sev.upper() in {"BLOCKER", "CRITICAL"}:
-            res = pf.get("resolution") or pf.get("post_fix_review") or ""
-            if not str(res).strip():
-                unresolved.append((pf.get("page"), pf.get("type", sev)))
+        sev_upper = str(pf.get("severity", "")).strip().upper()
+        if sev_upper not in {"BLOCKER", "CRITICAL", "MAJOR"}:
+            continue
+        res = pf.get("resolution")
+        if isinstance(res, dict):
+            ok_res = (str(res.get("status", "")) == "fixed_and_rereviewed"
+                      and str(res.get("fixed_pdf_sha256", "")) == cur_sha
+                      and int(res.get("review_trip", 0) or 0) >= 1)
+            if str(res.get("status", "")) == "waived":
+                ok_res = bool(res.get("waived_by") and res.get("rule_ref"))
+            if not ok_res:
+                (unresolved if sev_upper in {"BLOCKER", "CRITICAL"} else major_open).append(
+                    (pf.get("page"), pf.get("type", sev_upper), str(res)[:60]))
+        elif res:  # 非空字符串但非结构化 -> 不是 resolution（§4.3）
+            (unresolved if sev_upper in {"BLOCKER", "CRITICAL"} else major_open).append(
+                (pf.get("page"), pf.get("type", sev_upper), f"非结构化：{str(res)[:40]}"))
+        else:
+            (unresolved if sev_upper in {"BLOCKER", "CRITICAL"} else major_open).append(
+                (pf.get("page"), pf.get("type", sev_upper), ""))
     if unresolved:
         _violation(findings, "visual_veto",
-                   f"未关闭视觉 BLOCKER：{unresolved}——视觉提交阻断使用 veto 语义，"
-                   f"不得被任一席总分平均掉；须修复并完成 post-fix re-review（T102）", strict)
+                   f"未关闭视觉 BLOCKER/CRITICAL（结构化 resolution 缺失或 fixed SHA ≠ 当前）："
+                   f"{unresolved}——veto 语义，不得被任一席总分平均掉（T102/T116）", strict)
     if not unresolved:
-        findings.append(_ok("visual_veto", "无未关闭视觉 BLOCKER（veto semantics 通过）"))
+        findings.append(_ok("visual_veto", "无未关闭视觉 BLOCKER/CRITICAL（veto semantics 通过）"))
+    if major_open:
+        _violation(findings, "visual_major",
+                   f"MAJOR 未关闭（须 fixed_and_rereviewed 或显式 waived_by+rule_ref）："
+                   f"{major_open}——MAJOR 必须 fixed 或 explicitly waived（§4.4/T116）", strict)
+    else:
+        findings.append(_ok("visual_major", "MAJOR 均已 fixed_and_rereviewed 或显式 waiver"))
     findings.append(_ok("visual_coverage",
-                        f"逐页评审覆盖 {len(reviewed)}/{exp} 页（SHA={cur_sha[:12]}）"))
+                        f"逐页评审覆盖 {len(reviewed)}/{cur_pages} 页（SHA={cur_sha[:12]}；"
+                        f"records={len(records)}）"))
 
 
 def check_roster_drift(repo, findings, strict):

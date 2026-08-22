@@ -484,7 +484,11 @@ def main(argv=None):
     manifest = gc.load_manifest(ws)
     manifest_present = manifest_file.is_file()
     engine = gc.manifest_engine(ws) if manifest_present else "unknown"
-    tex_files = sorted(paper_dir.rglob("*.tex"))
+    # v4.4：排除图形源（tikz/svg 源文件）——颜色/坐标数字非论文数值
+    tex_files = sorted(f for f in paper_dir.rglob("*.tex")
+                       if "figures" not in f.parts or f.name.endswith(".tex"))
+    tex_files = [f for f in sorted(paper_dir.rglob("*.tex")) if f.suffix == ".tex" and (
+        ("figures" not in f.relative_to(paper_dir).parts))]
     typ_files_all = sorted(paper_dir.rglob("*.typ"))
     scan_units, mode, fig_stems = [], None, set()
     if manifest_present:

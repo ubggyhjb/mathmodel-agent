@@ -317,52 +317,71 @@ class Gate:
                      f"近空/孤立延续页 {near_empty_pages}（<120 字符且非末页/非参考文献）——"
                      f"一行/一词/孤立标题单独占页（T96）")
 
-        # T97/T98：低填充页 + 下一页顶部为图/表对象 -> 可回收空白
+        # T97/T98：低填充页 + 下一页顶部为图/表对象（含 section heading + 紧跟表）-> 可回收空白
+        # v4.4（P1-08/T114）：block-aware next-page——不能用 ^(图|表)\d+ 单判：
+        # section heading（如『四、符号说明』）+ 紧跟 table 同样构成 keep-together candidate。
         underfill = []
         float_head = re.compile(r"^(图|表)\s*\d+")
+        section_head = re.compile(r"^([一二三四五六七八九十]+、|\d+\.\d*\s|第[一二三四五六七八九十\d]+[章节部分])|^\\(?:sub)*section|^表?\s*\d+\s*$")
         for p in pages_info[:-1]:
             nxt = pages_info[p["n"]]
             nxt_text = nxt["text"].strip()
             nxt_is_float = bool(float_head.match(nxt_text)) or \
                            (nxt["imgs"] > 0 and len(nxt_text) < 400)
+            nxt_block = bool(section_head.match(nxt_text)) and bool(
+                re.search(r"(表\s*\d|图\s*\d|\\?begin\s*\{?(?:table|figure)|\\caption)", nxt["text"]))
+            nxt_kind = "float_head" if nxt_is_float else ("section_head_block" if nxt_block else "")
             if p["fill"] < 0.40:
-                underfill.append((p["n"], p["fill"], nxt_is_float, "fill<0.40"))
-            elif p["fill"] < PAGE_FILL_LOW_WARN and nxt_is_float:
-                underfill.append((p["n"], p["fill"], nxt_is_float, f"下一页对象 {nxt_text[:24]}"))
+                underfill.append((p["n"], p["fill"], nxt_kind, "fill<0.40"))
+            elif p["fill"] < PAGE_FILL_LOW_WARN and (nxt_is_float or nxt_block):
+                underfill.append((p["n"], p["fill"], nxt_kind,
+                                  f"下一页对象 {nxt_text[:24]}（keep-together candidate）"))
         if underfill:
             self.add("recoverable_underfill", "FAIL",
-                     f"可恢复欠填充页：{[(u[0], round(u[1], 2), u[3]) for u in underfill]}——"
-                     f"空白主要由 float/keep-together/不可拆对象造成，应先内容重排/float 策略/"
-                     f"构造规则（T97/T98）")
+                     f"可恢复欠填充页：{[(u[0], round(u[1], 2), u[2] or u[3]) for u in underfill]}——"
+                     f"空白主要由 float/keep-together（section heading+表 或 大对象）/不可拆对象造成，"
+                     f"应先内容重排/float 策略/构图规则（T97/T98/T114）")
 
-        # T99：首次引用与对象 placement 断裂
-        first_ref = None
+        # T99（v4.4 P1-09）：对每个 active figure/table 输出 first-reference placement，
+        # 不再只审第一个首次引用；gap/修复性后输出 reference_placement 数组。
         obj_page = {}
         for p in pages_info:
             for m in re.finditer(r"图\s*(\d+)\s*[：:·.．]", p["text"]):
                 obj_page.setdefault(("fig", int(m.group(1))), p["n"])
             for m in re.finditer(r"表\s*(\d+)\s*[：:·.．]", p["text"]):
                 obj_page.setdefault(("tab", int(m.group(1))), p["n"])
-        for p in pages_info:
-            for m in re.finditer(r"(?:如(?:图|表)|(?:图|表)\s*\d+[^。；]{0,6}所示|见(?:图|表))\s*(\d+)", p["text"]):
-                kind = "tab" if "表" in m.group(0) else "fig"
-                key = (kind, int(m.group(1)))
-                if key in obj_page:
-                    first_ref = (p["n"], key, obj_page[key])
+        ref_placement = []
+        for key in sorted(obj_page):
+            kr = None
+            for p in pages_info:
+                for m in re.finditer(r"(?:如(?:图|表)|(?:图|表)\s*\d+[^。；]{0,6}所示|见(?:图|表))\s*(\d+)",
+                                     p["text"]):
+                    if int(m.group(1)) == key[1] and ("表" in m.group(0) if key[0] == "tab" else "图" in m.group(0)):
+                        kr = p["n"]
+                        break
+                if kr:
                     break
-            if first_ref:
-                break
-        if first_ref:
-            kr, key, ko = first_ref
+            if kr is None:
+                continue
+            ko = obj_page[key]
             gap = ko - kr
+            issue = None
             if gap > 1:
-                self.add("first_reference_gap", "WARN",
-                         f"首次引用 {key}（第 {kr} 页）与实际位置（第 {ko} 页）相距 {gap} 页——"
-                         f"阅读断裂，建议就近放置（T99）")
+                issue = "WARN"
             elif gap == 1 and by_n[kr]["fill"] < PAGE_FILL_LOW_WARN:
+                issue = "FAIL"
+            ref_placement.append({"id": f"{key[0]}{key[1]}", "first_ref_page": kr, "object_page": ko,
+                                  "gap_pages": gap, "ref_page_fill": round(by_n[kr]["fill"], 3),
+                                  "severity": issue})
+            if issue == "WARN":
+                self.add("first_reference_gap", "WARN",
+                         f"首次引用 {key[0]}{key[1]}（第 {kr} 页）与实际位置（第 {ko} 页）相距 {gap} 页——"
+                         f"阅读断裂，建议就近放置（T99）")
+            elif issue == "FAIL":
                 self.add("first_reference_gap", "FAIL",
-                         f"首次引用 {key} 于第 {kr} 页（填充 {by_n[kr]['fill']:.0%}），对象被推到第 {ko} 页——"
-                         f"明显可同页却被 float 策略推走（T99）")
+                         f"首次引用 {key[0]}{key[1]} 于第 {kr} 页（填充 {by_n[kr]['fill']:.0%}），对象被推到第 "
+                         f"{ko} 页——明显可同页却被 float 策略推走（T99）")
+        self.reference_placement = ref_placement
 
 
     def latex_sources(self):
@@ -754,6 +773,7 @@ def main(argv=None):
     rep = {"gate": "layout_gate", "engine": engine, "adapter": engine if executed else "none",
            "entry": entry, "supported": supported, "executed": executed,
            "coverage": g.coverage, "checks": g.checks, "summary": summary,
+           "reference_placement": list(getattr(g, "reference_placement", []) or []),
            "strict": args.strict, "ran_at": gc.iso_now()}
     gc.save_json(out, rep)
     print(f"layout_gate: engine={engine} adapter={engine if executed else 'none'} "

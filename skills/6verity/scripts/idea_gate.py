@@ -213,6 +213,109 @@ def check_censoring_compat(qc_by_q, dec, cands, findings, strict):
                        f"删失结构被忽略（T69）", strict)
 
 
+def check_referential_integrity(qc_by_q, cands, dec, findings, strict):
+    """v4.4（P1-20/T120）：contract 全量引用完整性——缺失/悬空一律 FAIL，不再 continue 静默跳过。
+    1) 每个 question 至少一个候选；minimal + recommended 必须（advanced 可缺）；
+    2) 每条 candidate 的 question_id 必须真实存在；
+    3) decision.primary 每条必须 resolve 到真实候选；每个 question 必须有 primary；
+    4) decision 任一 id 集合（accepted/rejected/baseline/backup/exploratory）只引用已知候选；
+    5) 状态集合两两互斥（rejected 不得同时 accepted 等）。"""
+    qids = {str(q) for q in qc_by_q}
+    by_q = {}
+    known = set()
+    for c in cands or []:
+        if not isinstance(c, dict):
+            _violation(findings, "idea_refs", "IDEA_CANDIDATES 含非对象条目", strict)
+            continue
+        cid = str(c.get("idea_id", "") or "")
+        qid = str(c.get("question_id", "") or "")
+        if not cid:
+            _violation(findings, "idea_refs", "候选缺 idea_id（无法被 decision 引用）", strict)
+            continue
+        if qid:
+            known.add(cid)
+            if qid not in qids:
+                _violation(findings, "idea_refs",
+                           f"候选 {cid} 的 question_id={qid} 在 QUESTION_CONTRACT 不存在（悬空）", strict)
+            else:
+                by_q.setdefault(qid, []).append(c)
+    # 1) 每 question 的 tier 覆盖
+    for qid in sorted(qids):
+        qcands = by_q.get(qid, [])
+        if not qcands:
+            _violation(findings, "idea_refs",
+                       f"问题 {qid} 无任何候选——题目契约与候选集断裂（T120）", strict)
+            continue
+        tiers = {str(c.get("tier", "")) for c in qcands}
+        if "minimal_sufficient_solution" not in tiers:
+            _violation(findings, "idea_refs",
+                       f"问题 {qid} 缺 minimal_sufficient_solution（对照基线必需，T120）", strict)
+        if "recommended_solution" not in tiers and "advanced_alternative" not in tiers:
+            _violation(findings, "idea_refs",
+                       f"问题 {qid} 缺 recommended_solution（minimal+recommended 必需，advanced 可缺，T120）",
+                       strict)
+    # 3) primary：每问题至少一条 + resolve
+    if isinstance(dec, dict):
+        prim = dec.get("primary")
+        if not isinstance(prim, dict) or not prim:
+            _violation(findings, "idea_refs", "IDEA_DECISION 无 primary（每问必须指定主方案，T120）", strict)
+        else:
+            prim_ids = {str(v) for v in prim.values()}
+            for qid, pid in prim.items():
+                qid, pid = str(qid), str(pid)
+                if qid not in qids:
+                    _violation(findings, "idea_refs",
+                               f"decision.primary 引用问题 {qid} 但契约无此问题（T120）", strict)
+                elif pid not in {str(c.get("idea_id")) for c in by_q.get(qid, [])}:
+                    _violation(findings, "idea_refs",
+                               f"问题 {qid} 的 primary={pid} 不存在于候选（悬空主方案，T120）", strict)
+            for qid in qids:
+                if qid not in {str(k) for k in prim}:
+                    _violation(findings, "idea_refs",
+                               f"问题 {qid} 无 primary——每问必须指定（T120）", strict)
+        # 4) 各 id 集合 resolve
+        for role in ("accepted", "rejected", "baseline", "backup", "exploratory"):
+            ids = dec.get(role)
+            if ids is None:
+                continue
+            vals = ids.values() if isinstance(ids, dict) else ids
+            raw = []
+            for v in vals:
+                if isinstance(v, dict):
+                    raw.append(str(v.get("idea_id", v.get("id", ""))))
+                else:
+                    raw.append(str(v))
+            for vid in raw:
+                if vid and vid not in known:
+                    _violation(findings, "idea_refs",
+                               f"decision.{role} 引用未知候选 {vid}（T120）", strict)
+        # 5) 状态集合互斥（v4.4 修正语义：rejected 与其余全互斥；accepted 与
+        #    backup/exploratory 互斥；backup 与 exploratory 互斥；baseline 是"被接受的
+        #    对照角色"标签，允许与 accepted 重叠（同一 idea 可同时为 accepted + baseline））
+        role_sets = {}
+        for role in ("accepted", "rejected", "baseline", "backup", "exploratory"):
+            ids = dec.get(role)
+            if ids is None:
+                continue
+            vals = ids.values() if isinstance(ids, dict) else ids
+            role_sets[role] = {str(v.get("idea_id", v.get("id", ""))) if isinstance(v, dict) else str(v)
+                               for v in vals if str(v).strip()}
+        import itertools
+        EXCLUSIVE_PAIRS = [("rejected", "accepted"), ("rejected", "baseline"),
+                           ("rejected", "backup"), ("rejected", "exploratory"),
+                           ("accepted", "backup"), ("accepted", "exploratory"),
+                           ("backup", "exploratory")]
+        for r1, r2 in EXCLUSIVE_PAIRS:
+            inter = role_sets.get(r1, set()) & role_sets.get(r2, set())
+            if inter:
+                _violation(findings, "idea_refs",
+                           f"状态互斥冲突：{r1} ∩ {r2} = {sorted(inter)}——"
+                           f"同一候选不能同时属于该两状态集合（T120）", strict)
+    # 无决策时也报主键缺失（决策缺失已在 main 报）
+    if qids:
+        findings.append(_ok("idea_refs", f"contract 引用完整性：{len(qids)} 问 / {len(known)} 候选全量核对完毕"))
+
+
 def main(argv=None):
     gc.force_utf8()
     ap = argparse.ArgumentParser(description="v4.3 Idea Contract 门禁")
@@ -235,6 +338,7 @@ def main(argv=None):
     qc_by_q = check_question_contract(qc, findings, args.strict)
     clist = check_candidates(cands, qc_by_q, findings, args.strict)
     check_no_result_claims(cands or {}, ws, findings, args.strict)
+    check_referential_integrity(qc_by_q, clist, dec, findings, args.strict)
     if dec is not None:
         check_rejected_isolation(dec, spec, findings, args.strict)
         check_minimal_evidence(dec, clist, findings, args.strict)

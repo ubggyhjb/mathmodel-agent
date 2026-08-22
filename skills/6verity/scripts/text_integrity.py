@@ -21,6 +21,7 @@ r"""text_integrity.py — v4 文本完整性门（任务书 十二、十三条�
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from difflib import SequenceMatcher
@@ -250,8 +251,9 @@ def scan_internal_and_markdown(ws: Path, strict: bool):
         # 附录源码引用与参考文献区豁免（路径/文件名属合法内容）；
         # appendix_source_list.tex 为附录生成片段（源码清单/路径/版本号属合法内容）；
         # v4.3（P1-08/T83）：附录 A 支撑材料文件列表（supportfilescn 宏体）允许文件名（与 ZIP 一一对应）
-        if "A_code" in rel or "references" in rel or "appendix_source_list" in rel:
-            continue
+        if "A_code" in rel or "references" in rel or "appendix_source_list" in rel \
+                or "/figures/" in rel or rel.endswith("tikz_framework.tex"):
+            continue  # v4.4：图形源（tikz/svg 源文件）非论文章节，坐标/颜色行不适用重复句审计
         try:
             text = p.read_text(encoding="utf-8")
         except Exception:
@@ -394,6 +396,114 @@ def scan_compile_log(ws: Path, log_rel: str, strict: bool, severe_pt: float):
     return findings
 
 
+SCORE_FORBIDDEN = ["\u6982\u7387\u9608\u503c", "\u9884\u6d4b.{0,4}\u6982\u7387",
+                 "\u5224\u5f02\u6982\u7387", "\u662f\u5f02\u5e38\u7684\u6982\u7387",
+                 "\u60a3\u75c5\u6982\u7387"]  # 概率阈值/预测概率/判异概率/是异常的概率/患病概率
+SCORE_NEG_OK = re.compile("\u672a|\u4e0d\u4f5c|\u4e0d\u505a|\u7981\u6b62|\u4e0d\u5e94|\u975e|"
+                          "\u4e0d[\u4e00-\u9fa5]{0,4}\u6982\u7387\u6821\u51c6|\u4e0d\u662f.*\u6982\u7387|\u4e0d\u628a")
+
+
+def scan_score_semantics(ws: Path, strict: bool):
+    """v4.4 (P1-02/T112): uncalibrated_score 全链禁用概率语义（否定语境豁免）。"""
+    spec = gc.load_json(ws / "reports" / "FINAL_MODEL_SPEC.json", None)
+    if not isinstance(spec, dict):
+        return []
+    probs = [p for p in (spec.get("problems") or [])
+             if isinstance(p, dict) and (p.get("prediction_output") or {}).get("type") == "uncalibrated_score"]
+    if not probs:
+        return []
+    findings = []
+
+    def _check_line(ln, rel, i, allow_calibration=False):
+        if "predict_proba" in ln:
+            return
+        for pat in SCORE_FORBIDDEN:
+            for m in re.finditer(pat, ln):
+                ctx = ln[max(0, m.start() - 30):m.end() + 30]
+                if SCORE_NEG_OK.search(ctx):
+                    continue
+                if allow_calibration and re.search("\u6821\u51c6|\u4e0d\u4f5c\u6982\u7387|\u672a\u505a\u6982\u7387", ctx):
+                    continue
+                findings.append({"level": "FAIL" if strict else "WARN", "check": "score_semantics",
+                                 "message": f"{rel}:{i}: uncalibrated_score 语境出现概率语义词"
+                                            f"\u300e{m.group(0)}\u300f"
+                                            "-- score s(x)/threshold tau semantics (T112)"})
+
+    paper_dir = ws / "paper"
+    if paper_dir.is_dir():
+        for p in sorted(paper_dir.rglob("*.tex")):
+            try:
+                for i, ln in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    _check_line(ln, str(p.relative_to(ws)), i, allow_calibration=True)
+            except Exception:
+                continue
+    res_dir = ws / "results"
+    if res_dir.is_dir():
+        for p in sorted(res_dir.glob("*.json")):
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                continue
+            texts = []
+
+            def collect(o):
+                if isinstance(o, dict):
+                    for k, v in o.items():
+                        if k == "_meta":
+                            continue
+                        if isinstance(v, str):
+                            texts.append(v)
+                        else:
+                            collect(v)
+                elif isinstance(o, list):
+                    for v in o:
+                        collect(v)
+            collect(doc)
+            for tb in texts:
+                for ln in tb.splitlines():
+                    if "predict_proba" in ln:
+                        continue
+                    for pat in SCORE_FORBIDDEN + ["\u6982\u7387"]:
+                        for m in re.finditer(pat, ln):
+                            ctx = ln[max(0, m.start() - 30):m.end() + 30]
+                            if SCORE_NEG_OK.search(ctx) or re.search("\u6821\u51c6|\u4e0d\u4f5c\u6982\u7387|\u672a\u505a\u6982\u7387", ctx):
+                                continue
+                            findings.append({"level": "FAIL" if strict else "WARN", "check": "score_semantics",
+                                             "message": f"{p.name}: result string contains "
+                                                        f"{m.group(0)} (T112)"})
+                        break
+    fig_manifest = ws / "figures" / "figure_manifest.json"
+    if fig_manifest.is_file():
+        try:
+            for it in json.loads(fig_manifest.read_text(encoding="utf-8")):
+                if isinstance(it, dict):
+                    for i, ln in enumerate(str(it.get("caption", "")).splitlines(), 1):
+                        _check_line(ln, f"figures/figure_manifest.json:{it.get('id')}", i, allow_calibration=True)
+        except Exception:
+            pass
+    readme = ws / "README.md"
+    if readme.is_file():
+        for i, ln in enumerate(readme.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            _check_line(ln, "README.md", i, allow_calibration=True)
+    code_dir = ws / "code"
+    if code_dir.is_dir():
+        for p in sorted(code_dir.rglob("*.py")):
+            try:
+                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            except Exception:
+                continue
+            for i, ln in enumerate(lines, 1):
+                if "predict_proba" in ln or re.search("[\u4e00-\u9fa5]", ln) is None:
+                    continue
+                for pat in SCORE_FORBIDDEN:
+                    for m in re.finditer(pat, ln):
+                        ctx = ln[max(0, m.start() - 30):m.end() + 30]
+                        if SCORE_NEG_OK.search(ctx):
+                            continue
+                        findings.append({"level": "FAIL" if strict else "WARN", "check": "score_semantics",
+                                         "message": f"{p.name}:{i}: code comment (T112)"})
+    return findings
+
 def main(argv=None):
     gc.force_utf8()
     ap = argparse.ArgumentParser(description="v4 文本完整性门")
@@ -409,6 +519,7 @@ def main(argv=None):
     findings.extend(scan_placeholders(ws, args.strict))
     findings.extend(scan_keywords(ws, args.strict))
     findings.extend(scan_internal_and_markdown(ws, args.strict))
+    findings.extend(scan_score_semantics(ws, args.strict))
     findings.extend(scan_compile_log(ws, args.log, args.strict, args.overfull_severe_pt))
 
     fails = [f for f in findings if f["level"] == "FAIL"]
