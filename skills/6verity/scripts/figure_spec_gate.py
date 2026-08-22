@@ -55,28 +55,32 @@ def check_figure_specs(ws, strict, findings):
                  and str(m.get("visual_priority", "")) == "primary"]
     if not primaries:
         findings.append(_warn("figure_spec", "manifest 无 visual_priority=primary 的图——跳过 T90 强制"))
-        return
     specs_dir = ws / SPECS_DIR
-    for m in primaries:
+    for m in manifest:
+        if not isinstance(m, dict):
+            continue
         fid = str(m.get("id", ""))
+        is_primary = str(m.get("visual_priority", "")) == "primary"
         spec_path = specs_dir / f"{fid}.figure.json"
         spec = gc.load_json(spec_path, None)
-        if not isinstance(spec, dict):
+        if is_primary and not isinstance(spec, dict):
             _violation(findings, "figure_spec",
                        f"primary 图 {fid} 缺 {SPECS_DIR}/{fid}.figure.json——正式主图必须有"
                        f"视觉设计规范（T90）", strict)
             continue
+        if not isinstance(spec, dict):
+            continue  # secondary/appendix 无 spec 合法（T90 只强制 primary）
         missing = [f for f in REQUIRED_SPEC_FIELDS if not spec.get(f)]
-        if missing:
+        if is_primary and missing:
             _violation(findings, "figure_spec",
                        f"primary 图 {fid} 的 FIGURE_SPEC 缺字段：{missing}（T90）", strict)
             continue
         if str(spec.get("figure_id", "")) != fid:
             _violation(findings, "figure_spec",
                        f"{fid}.figure.json 的 figure_id={spec.get('figure_id')} 与清单 id 不一致", strict)
+        # renderer 契约（§22/T93 对全部声明渲染器的图；primary 加 auto/fallback 强校验）
         renderer = str(spec.get("renderer", ""))
         if renderer == "auto":
-            # §22：auto 探测运行时必须记录实际 renderer，禁止静默切换
             fallback = spec.get("renderer_fallback")
             if not fallback:
                 _violation(findings, "renderer_repro",
@@ -85,13 +89,10 @@ def check_figure_specs(ws, strict, findings):
             elif fallback not in ("python_matplotlib", "r_ggplot2", "tikz", "svg_inkscape"):
                 _violation(findings, "renderer_repro",
                            f"图 {fid} renderer_fallback={fallback!r} 非法", strict)
-        if renderer == "r_ggplot2":
-            has_renv = (ws / "renv.lock").is_file() or \
-                       any((ws / "R").rglob("*.R")) and (ws / "requirements_r.txt").is_file()
-            if not (ws / "renv.lock").is_file():
-                _violation(findings, "renderer_repro",
-                           f"图 {fid} renderer=r_ggplot2 但缺 renv.lock——R 必须带来可复现性"
-                           f"（renv restore 可恢复，T93）", strict)
+        if renderer == "r_ggplot2" and not (ws / "renv.lock").is_file():
+            _violation(findings, "renderer_repro",
+                       f"图 {fid} renderer=r_ggplot2 但缺 renv.lock——R 必须带来可复现性"
+                       f"（renv restore 可恢复，T93）", strict)
         # T92：语义配色——primary/comparators/baseline 不可等权重彩色
         ve = spec.get("visual_encoding") or {}
         primary_c = str(ve.get("primary", "") or "")

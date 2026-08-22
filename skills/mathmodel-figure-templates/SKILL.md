@@ -73,10 +73,15 @@ mps.save(fig, "figures/xxx")    # PNG 300dpi + 矢量 PDF
 ### R/ggplot2 首选（当本机有 R 时）
 - 统计图（scatter+smooth+CI / forest / 分布 / ROC-PR / survival / calibration /
   decision curve / heatmap / multi-panel）首选 `r_ggplot2`，依赖
-  ggplot2/patchwork/ggrepel/ggtext/scales/ggdist/cowplot/svglite/systemfonts。
+  ggplot2/patchwork/ggrepel/ggtext/scales/ggdist/cowplot/svglite/systemfonts/showtext。
 - **可复现**：`renv.lock` 必须随项目；renders 前 `renv::restore()`。
+- **本 skill 的 R 模板**：`R/theme_mathmodel.R`（8pt 主题 + 中文字体经 systemfonts/showtext
+  动态探测，零本机绝对路径）、`R/palette_mathmodel.R`（语义配色）、
+  `R/plots/example_forest.R`（森林图示例）、`R/plots/example_roc.R`（ROC/direct labeling 示例）。
 - 无 R：自动 fallback Python **并在 FIGURE_SPEC 记录 `renderer_fallback: python_matplotlib`**，
   禁止静默切换。
+- 部署常见路径（Windows）：`E:\R-4.6.1\bin\Rscript.exe` 或 PATH 中的 `Rscript`；用
+  `Rscript --version` 探测。
 
 ## Visual Critic（投稿级检查，≤3 轮）
 
