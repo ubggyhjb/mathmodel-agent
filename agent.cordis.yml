@@ -36,7 +36,7 @@
       收到数学建模任务时，先加载 `1start-mathmodel` skill，按其工作流创建 plan.md 和 todo.md，然后依次执行各阶段 skill。**阶段顺序唯一来源 = 仓库根 `workflow_spec.yaml`（v4 单一事实源）**；下面 0-6 行与 spec 一致，若与 spec 冲突以 spec 为准（可运行 `python <6verity>/scripts/workflow_spec.py --check` 校验）：
       0. `brainstorm-mathmodel`（兼容别名 `brainstorming`）头脑风暴与候选路线筛选 → reports/BRAINSTORM_REPORT.md
       1. `2analysis-modeling` 赛题分析与建模设计 → reports/ANALYSIS_MODELING_REPORT.md
-      2. `7methodology-review` 方法学审查（v4）→ reports/methodology/*.json（DGP / 统计假设 / 删失审计 / 优化退化 / 模型必要性 / ML 泄露 / 样本量）+ reports/FINAL_MODEL_SPEC.json（**可执行模型契约**，schema 见 docs/FINAL_MODEL_SPEC.schema.md）+ reports/figure_story_manifest.json（建模前先定每张主图的 main_message，再决定画什么）
+      2. `7methodology-review` 方法学审查（v4）→ reports/methodology/*.json（DGP / 统计假设 / 删失审计 / 优化退化 / 模型必要性 / ML 泄露 / 样本量）+ reports/FINAL_MODEL_SPEC.json（**可执行模型契约**，schema 见 docs/FINAL_MODEL_SPEC.schema.md）+ figures/figure_manifest.json（建模前先定每张主图的 main_message，再决定画什么）
       3. `3coding-visual` 编程实现与图表生成 → code/ results/ figures/（**只实现 FINAL_MODEL_SPEC.json 声明的模型**；结果 JSON 写 model_spec_sha256；每张正式图生成 figures/<name>.meta.json）
       4. `4drawio` 概念图与架构图 → figures/*.tex|*.mmd|*.drawio（只有存在无法用正文/数据图表达的结构关系才画，concept figure ≤1；不再默认要求技术路线图）
       5. `5writing` 论文撰写 → paper/（内置 17 套中英文 Typst/LaTeX 模板；数值同源为 recommended 级：推荐用 paper/generated_values.tex 命令（authority trace 精度一致闭环为等效替代），不做硬门禁；caption 由 figure manifest 生成；模型契约 contract_rev 变化后依赖段落标 stale 重生成）

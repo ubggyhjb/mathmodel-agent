@@ -65,6 +65,19 @@ def check_scope(scope, strict, findings):
             findings.append({"level": "WARN", "check": "scope",
                              "message": f"threshold_selection allowed_data={op.get('allowed_data')}；"
                                         f"规范为 inner_cv（禁止全体 OOF 选阈值后回报性能）"})
+    # v4.2（P1-04/T62）：算法家族选择若存在，必须登记为 inner_cv（nested，方案 B）
+    # 或 pre_specified（预先指定，方案 A）——用 outer-test 均值选家族 = selection optimism
+    family_ops = [o for o in ops if o.get("operation") == "algorithm_family_selection"]
+    for op in family_ops:
+        if str(op.get("allowed_data", "")) not in ("inner_cv", "pre_specified"):
+            gc_violation(findings, "scope",
+                         f"algorithm_family_selection allowed_data={op.get('allowed_data')!r}；"
+                         f"必须 inner_cv（nested 家族选择）或 pre_specified（预先指定，方案 A）——"
+                         f"禁止用外层测试均值选家族后宣称 nested（T62）", strict)
+    if family_ops:
+        findings.append({"level": "OK", "check": "scope",
+                         "message": f"算法家族选择已登记：{[(o.get('allowed_data')) for o in family_ops]}"})
+    return bool(family_ops)
 
 
 def check_runtime_audit(ws, strict, findings):
@@ -118,6 +131,19 @@ def check_paper_claims(ws, strict, findings):
         gc_violation(findings, "paper", f"论文泄漏性表述：『{m.group(0)[:50]}』——阈值/参数须在内层 CV 或训练折内确定", strict)
     if "inside" not in text and "内层" in text and "阈值" in text:
         findings.append({"level": "OK", "check": "paper", "message": "论文出现内层 CV 阈值表述（人工确认嵌套结构）"})
+    # v4.2（P1-04/T62）：论文出现算法家族对比（RF/GBDT vs LR）时，家族选择必须已登记
+    low = text.lower()
+    has_family = ("随机森林" in text or "random forest" in low) and \
+                 ("梯度提升" in text or "gradient boost" in low or "gradient boosting" in low)
+    if has_family:
+        scope = gc.load_json(ws / SCOPE_REL, None)
+        registered = isinstance(scope, dict) and any(
+            o.get("operation") == "algorithm_family_selection" for o in scope.get("operations", []))
+        if not registered:
+            gc_violation(findings, "paper",
+                         "论文出现算法家族对比（随机森林/梯度提升 vs 逻辑回归）但 ml_operation_scope 未登记 "
+                         "algorithm_family_selection（allowed_data=inner_cv|pre_specified）——"
+                         "用外层评估结果选家族存在 selection optimism（P1-04/T62）", strict)
 
 
 def check_code_heuristics(ws, findings):
@@ -137,6 +163,37 @@ def check_code_heuristics(ws, findings):
                 findings.append({"level": "WARN", "check": "code",
                                  "message": f"{fname}: 疑似泄露——{m.group(0)} 在数据划分前计算"
                                             f"（可能基于全量标签），阈值选择须内层 CV（辅助提示）"})
+
+
+def check_hardcoded_fallback(ws, strict, findings):
+    """v4.2（P1-14/T64）：核心结果禁止 fallback 到硬编码论文数字。
+
+    .get(key, 0.4564) / else 0.0395 等数值默认值 = paper number fallback：
+    源 key 缺失时应 fail fast 报错，而不是悄悄用论文数字（图与结果可能静默不一致）。
+    允许清单：reports/hardcoded_fallback_allowlist.json（[{file, line}]）逐个销号。
+    """
+    allow = gc.load_json(ws / "reports" / "hardcoded_fallback_allowlist.json", None)
+    allow_set = set()
+    if isinstance(allow, list):
+        for a in allow:
+            allow_set.add((str(a.get("file", "")), str(a.get("line", ""))))
+    for fname, code in scan_code_files(ws):
+        for m in re.finditer(r"\.get\(\s*[^,)]{0,60},\s*([-+]?\d+\.\d{2,})[^)]*\)", code):
+            lineno = code[:m.start()].count("\n") + 1
+            if (fname, str(lineno)) in allow_set:
+                continue
+            gc_violation(findings, "hardcoded_fallback",
+                         f"{fname}:{lineno}: .get() 默认值为硬编码数值 {m.group(1)}"
+                         f"（源 key 缺失应 fail fast；论文数字 fallback 会静默掩盖口径漂移，P1-14/T64）",
+                         strict)
+        for m in re.finditer(r"\belse\s+([-+]?\d+\.\d{2,})\b", code):
+            lineno = code[:m.start()].count("\n") + 1
+            if (fname, str(lineno)) in allow_set:
+                continue
+            gc_violation(findings, "hardcoded_fallback",
+                         f"{fname}:{lineno}: else 分支硬编码数值 {m.group(1)}"
+                         f"（源 key 缺失应 fail fast；论文数字 fallback 静默掩盖口径漂移，P1-14/T64）",
+                         strict)
 
 
 def gc_violation(findings, check, msg, strict):
@@ -161,6 +218,7 @@ def main(argv=None):
     check_paper_claims(ws, args.strict, findings)
     check_runtime_audit(ws, args.strict, findings)
     check_code_heuristics(ws, findings)
+    check_hardcoded_fallback(ws, args.strict, findings)
 
     fails = [f for f in findings if f["level"] == "FAIL"]
     warns = [f for f in findings if f["level"] == "WARN"]

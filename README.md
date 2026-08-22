@@ -25,8 +25,8 @@
      **内嵌物理越界检查**（表格/图片越出心、行重叠，layout_audit 合入）
   3. **text_integrity（v4 新门）**：`图 ??`/`表 ??`/`式 ??`/TODO/TBD/PLACEHOLDER/待补 +
      编译日志 undefined reference/citation、multiply-defined labels、severe overfull；关键词分隔符检查
-  4. **trace**：论文数字必须追溯到 results/*.json；v4 支持 `paper/generated_values.tex`
-     命令溯源（数值由结果文件生成，天然带 key）
+  4. **trace**：论文数字必须追溯到 results/*.json；v4 支持可选的 `paper/generated_values.tex`
+     命令溯源（数值由结果文件生成，天然带 key；generated_values 与 authority trace 二选一即可）
   5. **style**：v4 每条规则带 severity（must=官方硬规则才 FAIL；recommended=WARN；
      摘要长度/粗体率等为推荐带不硬 FAIL）
   6. **decision**：决策日志完整性（stages 从 workflow_spec 加载）、阶段产物绑定、三席盲评销号链
@@ -117,9 +117,22 @@ python skills/6verity/tests/run_tests.py --workspace <项目目录>  # 全量（
 │   ├── variables.json                 # v4 单位注册（unit registry）
 │   └── gates/                         # 门禁报告
 ├── code/  results/  figures/          # 结果 JSON 带 model_spec_sha256；正式图带 .meta.json
-└── paper/                  # main.tex | main.typ + sections/ + generated_values.tex
+└── paper/                  # main.tex | main.typ + sections/（generated_values.tex 可选：数值来源二选一）
 ```
 
 ## 许可证
 
 [MIT](./LICENSE)。使用前请遵守各竞赛组委会的规则（如 CUMCM 对 AI 工具使用与检索来源的具体规定），本仓库提供的合规基线以 2026 年国赛口径为准，最终以最新官方文件为准。
+
+
+<!-- docs_sync:stages -->
+| 阶段 | skill | 门禁 | 主要产出 | 目的 |
+|---|---|---|---|---|
+| brainstorm | brainstorm-mathmodel | — | reports/BRAINSTORM_REPORT.md | 读题后发散 ≥3 条候选路线，评估可行性/区分度/风险，收敛主选+备选 |
+| analysis | 2analysis-modeling | — | reports/ANALYSIS_MODELING_REPORT.md | 解析题意、识别变量/约束/数据/评价指标；众数解清单 + 差异化审查 |
+| methodology_review | 7methodology-review | methodology | reports/methodology/*.json, reports/FINAL_MODEL_SPEC.json, figures/figure_manifest.json | DGP/假设/删失/退化/必要性/泄露/样本量审计；产出可执行模型契约 FINAL_MODEL_SPEC.json 与唯一 Figure Manifest（dr… |
+| coding_visual | 3coding-visual | leakage | code/*.py, results/*.json, figures/*.pdf, figures/*.meta.json | 只实现 FINAL_MODEL_SPEC.json 声明的模型；结果 JSON 写 model_spec_sha256；图写 meta.json |
+| schematic | 4drawio | — | figures/*.tex|*.mmd|*.drawio | 仅当存在无法用正文/数据图表达的结构关系才画概念图（concept figure ≤1） |
+| writing | 5writing | figure_story | paper/main.tex|main.typ, paper/sections/* | 数值来源二选一（numeric_source_policy.mode=one_of）：generated_values.tex（recommended）或 re… |
+| verification | 6verity | run_all_gates | reports/gates/*.json, reports/VERIFY_REPORT.md | v4.1（R-02）：验证器输入=论文/结果/图/清单/契约/方法学 JSON——不得把自产的 gates_report 当输入（无自输入循环）；输出门禁报告与… |
+<!-- /docs_sync:stages -->

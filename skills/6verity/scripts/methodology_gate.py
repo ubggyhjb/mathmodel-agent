@@ -486,6 +486,45 @@ def _violation(findings, check, msg, strict):
     findings.append({"level": "FAIL" if strict else "WARN", "check": check, "message": msg})
 
 
+def check_parsimony_reopen(ws, spec, findings, strict):
+    """v4.2（P1-03/T61）：parsimony_reopen——更简单 ablation 不差于 primary 时必须重新评估。
+
+    触发条件：results/*.json 顶层键（含键名 ablation/simpler/ablation_simpler 等）存在；
+    处置：若存在 reports/methodology/parsimony_review.json（或 FINAL_MODEL_SPEC.parsimony_review）
+    且 strategy ∈ {one_se_rule, complexity_penalty, pre_specified_interpretability} → 通过；
+    否则 FAIL（strict）：不能一边说"全特征最优"一边报告简化模型均值更高而不解释。
+    """
+    results = ws / "results"
+    hits = []
+    if results.is_dir():
+        for p in sorted(results.glob("*.json")):
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(doc, dict):
+                continue
+            for k, v in doc.items():
+                if re.search(r"(ablation|simpler)", k, re.I) and isinstance(v, (dict, list)):
+                    hits.append(f"{p.name}::{k}")
+    if not hits:
+        return
+    review = gc.load_json(ws / "reports" / "methodology" / "parsimony_review.json", None)
+    if review is None and isinstance(spec, dict):
+        review = spec.get("parsimony_review")
+    valid = isinstance(review, dict) and str(review.get("strategy", "")) in (
+        "one_se_rule", "complexity_penalty", "pre_specified_interpretability")
+    if valid:
+        findings.append(_ok("parsimony",
+                            f"简化模型差异已审查（strategy={review.get('strategy')}，"
+                            f"decision={str(review.get('decision', ''))[:60]}）——触发项 {hits[:4]}"))
+    else:
+        _violation(findings, "parsimony",
+                   f"发现简化/消融结果 {hits[:4]}（或与 primary 性能相当）但无 parsimony_review 记录"
+                   f"（strategy=one_se_rule|complexity_penalty|pre_specified_interpretability）——"
+                   f"必须重新打开 primary 选择解释（P1-03/T61）", strict)
+
+
 def main(argv=None):
     gc.force_utf8()
     ap = argparse.ArgumentParser(description="v3 Methodology Review 门禁")
@@ -524,6 +563,8 @@ def main(argv=None):
     check_model_spec(spec, ws, text, args.strict, findings)
     # v4：条件必需输入（任务书 6 条：适用就硬 FAIL，不适用不机械要求）
     conditional_required_inputs(dgp, spec, mdir, args.strict, findings)
+    # v4.2（P1-03/T61）：parsimony reopen——更简 ablation 不差于 primary 必须解释
+    check_parsimony_reopen(ws, spec, findings, args.strict)
 
     if dgp is not None:
         check_dgp(dgp, text, args.strict, findings)

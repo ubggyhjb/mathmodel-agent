@@ -33,9 +33,9 @@ stages:
     outputs:
       - "reports/methodology/*.json"
       - "reports/FINAL_MODEL_SPEC.json"
-      - "reports/figure_story_manifest.json"
+      - "figures/figure_manifest.json"
     gate: methodology
-    purpose: "DGP/假设/删失/退化/必要性/泄露/样本量审计；产出可执行模型契约 FINAL_MODEL_SPEC.json"
+    purpose: "DGP/假设/删失/退化/必要性/泄露/样本量审计；产出可执行模型契约 FINAL_MODEL_SPEC.json 与唯一 Figure Manifest（draft 状态，coding_visual 后置 approved）"
   - id: coding_visual
     skill: 3coding-visual
     inputs: ["reports/FINAL_MODEL_SPEC.json"]
@@ -61,7 +61,12 @@ stages:
       - "paper/generated_values.tex"
     outputs: ["paper/main.tex|main.typ", "paper/sections/*"]
     gate: figure_story
-    purpose: "数值用 generated_values.tex 命令；caption 由 figure manifest 生成；模型缺点随契约失效"
+    purpose: "数值来源二选一（numeric_source_policy.mode=one_of）：generated_values.tex（recommended）或 results/*.json 权威 trace 闭环，二者选一即可，禁止无源数值；caption 由 figure manifest 生成；模型缺点随契约失效"
+    numeric_source_policy:
+      mode: one_of
+      alternatives:
+        - generated_values
+        - authority_trace
   - id: verification
     skill: 6verity
     inputs:

@@ -158,6 +158,111 @@ def check_source_key(ws: Path, src: dict, key: str) -> bool:
     return _find_json_value(doc, key) is not None
 
 
+# ---------- v4.2：panel 强制声明 / structured claims / stale story ----------
+
+
+def _multi_panel_signals(mcap: str, meta: dict) -> list:
+    """G-03/T49：检测 multi-panel 图信号（caption 面板标记 / meta 多面板计数）。"""
+    sigs = []
+    if mcap and re.search(r"(?<![A-Za-z0-9])([A-D])\s*[：:]", mcap):
+        sigs.append("caption 含面板标记（A：/B：/C：）")
+    if isinstance(meta, dict):
+        mp = meta.get("panels")
+        if isinstance(mp, dict) and len(mp) > 1:
+            sigs.append(f"meta.panels 记录 {len(mp)} 个面板")
+        axes = meta.get("axes")
+        if isinstance(axes, list) and len(axes) > 1:
+            sigs.append(f"meta.axes 登记 {len(axes)} 个坐标轴")
+    return sigs
+
+
+CLAIM_PREDICATES = {"crosses_zero", "equal_to", "gt", "lt", "within", "contains", "not_contains"}
+
+
+def check_structured_claims(ws: Path, item: dict, strict: bool):
+    """v4.2 G-04/T50：story.claims 结构化绑定 result key + predicate；
+    story 自由文本只做呈现，claim 才是真值源——claim 与结果矛盾或 key 失效即 FAIL。"""
+    findings = []
+    claims = (item.get("story") or {}).get("claims") or []
+    if not claims:
+        return findings
+    src_map = {}
+    for src in item.get("source", {}).get("source_results") or []:
+        rel = str(src.get("file", "")).strip().lstrip("/\\")
+        doc = gc.load_json(ws / rel, None) if rel else None
+        if doc is not None:
+            src_map.setdefault(Path(rel).stem, doc)
+    for c in claims:
+        rk = str(c.get("result_key", "") or "")
+        pred = str(c.get("predicate", "") or "")
+        if "." not in rk or pred not in CLAIM_PREDICATES:
+            findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_schema",
+                             "message": f"Figure {item.get('id')}: claim 缺少合法 result_key/predicate"
+                                        f"（{rk!r}/{pred!r}）——G-04 要求结构化绑定"})
+            continue
+        stem, path = rk.split(".", 1)
+        doc = src_map.get(stem)
+        if doc is None:
+            findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_key",
+                             "message": f"Figure {item.get('id')}: claim 的 result_key={rk} "
+                                        f"在 source_results 中无对应文件"})
+            continue
+        val = _find_json_value(doc, path)
+        if val is None:
+            findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_key",
+                             "message": f"Figure {item.get('id')}: claim 的 result_key={rk} 在 "
+                                        f"{stem} 中不存在"})
+            continue
+        exp = c.get("expected")
+        ok = None
+        if pred == "crosses_zero":
+            lo = hi = None
+            if isinstance(val, dict):
+                lo = val.get("low", val.get("ci_low", val.get("lower")))
+                hi = val.get("high", val.get("ci_high", val.get("upper")))
+            elif isinstance(val, (list, tuple)) and len(val) == 2:
+                lo, hi = val[0], val[1]
+            ok = (lo is not None and hi is not None and lo < 0 < hi) == bool(exp)
+        elif pred == "equal_to":
+            ok = str(val) == str(exp)
+        elif pred == "gt":
+            ok = float(val) > float(exp)
+        elif pred == "lt":
+            ok = float(val) < float(exp)
+        elif pred == "within":
+            ok = isinstance(exp, (list, tuple)) and len(exp) == 2 and exp[0] <= float(val) <= exp[1]
+        elif pred == "contains":
+            ok = str(exp) in str(val)
+        elif pred == "not_contains":
+            ok = str(exp) not in str(val)
+        if ok is None:
+            continue  # 无法判定（类型不符）——不误报
+        if not ok:
+            findings.append({"level": "FAIL" if strict else "WARN", "check": "claim_false",
+                             "message": f"Figure {item.get('id')}: claim {rk} {pred}={exp} 与结果值 "
+                                        f"{str(val)[:40]} 矛盾（T50：story 与 result 不一致）"})
+    return findings
+
+
+STALE_TERMS = ("插值", "interpolation", "Kaplan-Meier", "Kaplan", "Greenwood", "KM ")
+LATEST_TERMS = ("Turnbull", "区间删失", "interval-censored", "interval censored")
+
+
+def check_stale_story(item: dict, mcap: str, strict: bool):
+    """v4.2 T51：story 仍用旧口径词（插值/KM）而 caption 已是当前口径（Turnbull/区间删失）→ FAIL。"""
+    findings = []
+    story = str((item.get("story") or {}).get("main_message") or "")
+    if not story or not mcap:
+        return findings
+    stale = [t for t in STALE_TERMS if t.lower() in story.lower()]
+    latest = [t for t in LATEST_TERMS if t.lower() in mcap.lower()]
+    if stale and latest:
+        findings.append({"level": "FAIL" if strict else "WARN", "check": "stale_story_term",
+                         "message": f"Figure {item.get('id')}: story.main_message 含旧口径词 {stale}，"
+                                    f"但 caption 已是 {latest}——story 未随口径迁移（T51）"})
+    return findings
+
+
 def audit_variables(ws: Path, meta: dict):
     """meta.axes 的 variable/display 声明必须与 reports/variables.json 一致；
     且 annotations 的 raw/value 不得同值（但 registry 声明了非 1 的显示变换）——
@@ -267,6 +372,7 @@ def main(argv=None):
     for item in manifest:
         idx = item.get("id", "?")
         files = item.get("files", [])
+        mcap = str(item.get("caption", "") or "").strip()
         meta = load_meta(ws, files[0]) if files else None
         if files and idx not in used_stems and Path(files[0]).stem not in used_stems:
             continue  # 未上正文的图不做完整性检查
@@ -278,6 +384,14 @@ def main(argv=None):
                              "message": f"Figure {idx} 缺 figures/<id>.meta.json（R-05：正式图必须带 "
                                         f"provenance + artist 计数；缺 meta 不得进入终稿）"})
         else:
+            # v4.2 G-03/T49：multi-panel 信号但 manifest.panels 为空 -> FAIL
+            #（空 panels 使 panel integrity 形同虚设：caption 有 A:B:C 或 meta 多面板都必须声明）
+            if not (item.get("panels") or []):
+                sigs = _multi_panel_signals(mcap, meta)
+                if sigs:
+                    findings.append({"level": "FAIL" if args.strict else "WARN", "check": "panel_declaration",
+                                     "message": f"Figure {idx} 检测到 multi-panel 信号但 manifest.panels "
+                                                f"为空（{sigs}）——panels: [] 绕过 panel integrity（G-03/T49）"})
             # panel integrity（R-05：panel 默认至少 1 个 data artist，除非 intentionally_empty=true）
             for panel in item.get("panels", []) or []:
                 if not isinstance(panel, dict):
@@ -345,7 +459,6 @@ def main(argv=None):
                                      "message": f"Figure {idx} 声明的源结果 {rel} 哈希与当前文件不一致——"
                                                 f"图可能由旧结果/旧口径生成（报告重新生成图）"})
         # caption 一致性（不依赖 meta.json）
-        mcap = str(item.get("caption", "") or "").strip()
         if mcap:
             for f in files:
                 stem = Path(f).stem
@@ -364,6 +477,9 @@ def main(argv=None):
                         findings.append({"level": "FAIL" if args.strict else "WARN", "check": "caption_panel_model",
                                          "message": f"Figure {idx}: caption 提及模型 {sorted(cap_models)} "
                                                     f"与 panels.model_id {sorted(panel_models)} 不一致（P0-02/T35）"})
+        # v4.2 G-04/T50 + T51：structured claims 真值校验 + story 旧口径词
+        findings.extend(check_structured_claims(ws, item, args.strict))
+        findings.extend(check_stale_story(item, mcap, args.strict))
         # T37/P0-05：spec 为 interval 主口径时，正式图 caption 不得用 KM/Greenwood 表述
         spec = gc.load_json(ws / "reports" / "FINAL_MODEL_SPEC.json", None)
         interval_main = bool(spec) and any(

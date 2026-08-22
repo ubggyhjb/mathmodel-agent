@@ -76,7 +76,7 @@
 
 ## 四、边界情况与失败模式（已处理）
 
-1. **旧 v3 项目兼容**：figure_story 回退读 `reports/figure_story_manifest.json`（WARN 提示迁移）；check_decision_log 对缺 brainstorm 的旧日志兼容；methodology 无契约 → strict FAIL（显式，不是静默放行）。
+1. **旧 v3 项目兼容**：v4.1 起 figure_story 不再回退旧路径 `reports/figure_story_manifest.json`（已废除，只认唯一清单 `figures/figure_manifest.json`，发现旧文件只提示删除）；check_decision_log 对缺 brainstorm 的旧日志兼容；methodology 无契约 → strict FAIL（显式，不是静默放行）。
 2. **离线**：verify_refs 网络失败时 T11 标 SKIP；其余门禁全离线可跑。
 3. **非 LaTeX 引擎**：text_integrity 无 .log 时只做源级扫描；layout_gate physical 只在 PDF 存在时执行。
 4. **误报控制**：证据词按"组内任一"而非全词匹配（中文"区间删失"即满足）；参数/相邻对顺序推断改为稳定锚点。

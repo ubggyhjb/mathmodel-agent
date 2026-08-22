@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""visual_review.py — v4.1（R-09）：视觉审稿输入生成 + PDF SHA 绑定。
+"""visual_review.py — v4.2（R-09 强化）：视觉审稿输入生成 + PDF SHA 绑定。
 
 把 PDF 前 N 页渲染成 contact sheet PNG 并记录 reviewed_pdf_sha256 到
 reports/visual_review.json。Reviewer C 只对登记了相同 SHA 的审稿负责：
 PDF 重编译后 SHA 改变 -> 旧视觉审稿自动失效（再跑本脚本重新登记）。
 
+v4.2（G-05/G-06）：
+  - contact sheet 行数按请求页数动态计算（rows = ceil(n/cols)），并断言
+    实际渲染页数 == 请求页数——旧版 5x3 只装 15 页，16-N 页落画布外（第 25 页重复错误曾在盲区）；
+  - 单图预览不再取 mtime 最新 8 张：默认全审 figure_manifest 的 primary 图，
+    另可用 --figures 传入本次变更集合（changed figures 全审），避免靠 mtime 猜。
+
 用法：
-  python visual_review.py --workspace <项目根> [--pages 30] [--figures-dir figures]
+  python visual_review.py --workspace <项目根> [--pages 30] [--figures q1,q2]
   python visual_review.py --check --workspace <项目根>   # 校验 visual_review.json 的 SHA == 当前 PDF
 输出：reports/visual_review.json（contact_sheet 路径 / reviewed_pdf_sha256 / 单图渲染列表）
 """
@@ -16,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -49,11 +56,25 @@ def check(ws: Path, strict: bool):
     return 0
 
 
+def primary_figures(ws: Path) -> list:
+    """figure_manifest 中 visual_priority=primary 的全部图 stem（G-06：primary 全审）。"""
+    manifest = ws / "figures" / "figure_manifest.json"
+    if not manifest.is_file():
+        return []
+    try:
+        items = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [it.get("id", "") for it in items if it.get("visual_priority") == "primary"]
+
+
 def main(argv=None):
     gc.force_utf8()
-    ap = argparse.ArgumentParser(description="v4.1 视觉审稿输入 + PDF SHA 绑定")
+    ap = argparse.ArgumentParser(description="v4.2 视觉审稿输入 + PDF SHA 绑定")
     ap.add_argument("--workspace", default=".")
     ap.add_argument("--pages", type=int, default=30)
+    ap.add_argument("--figures", default="",
+                    help="逗号分隔的本次变更图 stem（changed figures 全审）；缺省 = primary 图全审")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args(argv)
 
@@ -74,9 +95,10 @@ def main(argv=None):
     out_dir = ws / "reports" / "visual"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # contact sheet（1-N 页）
+    # contact sheet（1-N 页；行数按请求页数动态计算，禁止画布溢出）
     n = min(args.pages, doc.page_count)
-    cols, rows, thumb_w = 5, 3, 170
+    cols, thumb_w = 5, 170
+    rows = max(1, math.ceil(n / cols))
     th = int(thumb_w * 841.89 / 595.27)
     sheet = fitz.open()
     page = sheet.new_page(width=cols * thumb_w, height=rows * th)
@@ -90,26 +112,54 @@ def main(argv=None):
         page.insert_image(fitz.Rect(x, y, x + pix.width, y + pix.height), pixmap=pix)
     sheet_png = out_dir / "contact_sheet.png"
     page.get_pixmap().save(str(sheet_png))
+    if n < args.pages and doc.page_count >= args.pages:
+        print(f"WARN 请求 {args.pages} 页但 PDF 仅 {doc.page_count} 页，渲染 {n} 页")
+    if n != min(args.pages, doc.page_count):
+        print("FAIL contact sheet 渲染页数 != 请求页数")
+        return 2
 
-    # 单图渲染（本轮新增/修改图由调用方传入 --figures；此处渲染 figures 目录下元数据最新 8 张）
+    # 单图渲染：primary 全审 ∪ --figures 变更集合（G-06：不再用 mtime 最新 8 张）
+    requested = []
+    for it in primary_figures(ws):
+        if it and it not in requested:
+            requested.append(it)
+    for stem in [s.strip() for s in args.figures.split(",") if s.strip()]:
+        if stem not in requested:
+            requested.append(stem)
     singles = []
+    missing_src = []
     figs = ws / "figures"
-    if figs.is_dir():
-        metas = sorted(figs.glob("*.meta.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:8]
-        for mp in metas:
-            stem = mp.stem.replace(".meta", "")
-            for ext in ("pdf", "png"):
-                src = figs / f"{stem}.{ext}"
-                if src.is_file() and src.suffix == ".pdf":
-                    try:
-                        fd = fitz.open(str(src))
-                        pix = fd[0].get_pixmap(matrix=fitz.Matrix(2.2, 2.2))
-                        out = out_dir / f"{stem}.png"
-                        pix.save(str(out))
-                        singles.append(str(out.relative_to(ws)))
-                        break
-                    except Exception:
-                        continue
+    for stem in requested:
+        src = None
+        for ext in ("pdf", "png"):
+            cand = figs / f"{stem}.{ext}"
+            if cand.is_file():
+                src = cand
+                break
+        if src is None:
+            missing_src.append(stem)
+            continue
+        if src.suffix == ".pdf":
+            try:
+                fd = fitz.open(str(src))
+                pix = fd[0].get_pixmap(matrix=fitz.Matrix(2.2, 2.2))
+                out = out_dir / f"{stem}.png"
+                pix.save(str(out))
+                singles.append(str(out.relative_to(ws)))
+                continue
+            except Exception:
+                pass
+        # png 源：直接复制为预览（无矢量重渲染）
+        out = out_dir / f"{stem}.png"
+        out.write_bytes(src.read_bytes())
+        singles.append(str(out.relative_to(ws)))
+    if missing_src:
+        print(f"FAIL 以下被审图在 figures/ 无 pdf/png 源：{missing_src}")
+        return 2
+    # 渲染完整性断言（G-05）：请求的每个 stem 都应有预览
+    if len(singles) != len(requested):
+        print(f"FAIL 单图预览 {len(singles)}/{len(requested)} 张，请求集合未全审")
+        return 2
 
     sha = sha256_file(pdf)
     record = {
@@ -117,15 +167,18 @@ def main(argv=None):
         "pdf": str(pdf.relative_to(ws)),
         "pdf_pages": doc.page_count,
         "contact_sheet": str(sheet_png.relative_to(ws)),
+        "contact_sheet_pages": n,
+        "contact_sheet_layout": f"{cols}x{rows}",
         "single_figure_previews": singles,
+        "single_figure_requested": requested,
         "generated_at": gc.iso_now(),
         "note": "R-09：Reviewer C 结果必须对应本登记 SHA；PDF 重编译后 SHA 改变则审稿失效（--check 校验）",
     }
     (ws / "reports" / "visual_review.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"VISUAL_REVIEW: contact sheet -> {sheet_png.relative_to(ws)}")
+    print(f"VISUAL_REVIEW: contact sheet -> {sheet_png.relative_to(ws)}（{cols}x{rows} 布局，{n} 页）")
     print(f"  reviewed_pdf_sha256 = {sha}")
-    print(f"  单图预览 {len(singles)} 张；运行 --check 校验 SHA 绑定")
+    print(f"  单图预览 {len(singles)}/{len(requested)} 张；运行 --check 校验 SHA 绑定")
     return 0
 
 

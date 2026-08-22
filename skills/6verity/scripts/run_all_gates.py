@@ -93,6 +93,11 @@ def gate_specs(ws: Path, strict: bool, skip: set):
          ["--workspace", str(ws), *strict_args], "reports/gates/leakage_gate.json"),
         ("figure_story", scripts / "figure_story.py",
          ["--workspace", str(ws), *strict_args], "reports/gates/figure_story.json"),
+        # v4.2（9.1/9.2）：verification 强制 substage——部署效用审计 + 提交包审计
+        ("deployment_utility", scripts / "deployment_utility.py",
+         ["--workspace", str(ws), *strict_args], "reports/deployment_utility.json"),
+        ("submission_package", scripts / "submission_package_gate.py",
+         ["--workspace", str(ws), "--check"], None),
     ]
 
 

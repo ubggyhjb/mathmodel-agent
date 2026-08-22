@@ -679,6 +679,304 @@ def main():
         import shutil as _sh
         _sh.rmtree(path_ws, ignore_errors=True)
 
+    # ============ v4.2 false-pass regression（T46-T64，任务书 v4.2 第十节） ============
+    import zipfile as _zip
+
+    def make_support_zip(tws: Path, files: dict):
+        """构造 提交/支撑材料.zip（files: relpath -> str 内容）。"""
+        sub = tws / "提交"
+        sub.mkdir(parents=True, exist_ok=True)
+        zpath = sub / "支撑材料.zip"
+        with _zip.ZipFile(zpath, "w") as z:
+            for rel, content in files.items():
+                z.writestr(rel, content if isinstance(content, str) else content.read_bytes())
+        return zpath
+
+    # T46 小写 u/l 区间似然反向表达（S(u)-S(l) / S(u_i^-)-S(l_i) / S(r)-S(l)）-> text_integrity FAIL
+    for i, expr in enumerate([
+        r"\log[S(u_i)-S(l_i)]",
+        r"\log[S(u_i^-)-S(l_i)]",
+        r"\log[S(r)-S(l)]",
+        r"\log[S(U_i)-S(L_i)]",
+    ]):
+        with tempfile.TemporaryDirectory() as td:
+            tws = Path(td)
+            (tws / "paper").mkdir(parents=True)
+            (tws / "paper" / "main.tex").write_text(f"区间删失贡献为 {expr}。\n", encoding="utf-8")
+            results.append(report(f"T46.{i}", f"likelihood 角色化校验 FAIL（{expr[:24]}…）", False,
+                                  run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+    # 正确方向必须 PASS
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "paper" / "main.tex").write_text(
+            r"区间删失贡献为 \log[S(l_i)-S(u_i^-)] 与 \log[S(L_i)-S(U_i)]。\n", encoding="utf-8")
+        results.append(report("T46.good", "likelihood 正确方向 PASS", True,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T47 列表项第 3 项与第 5 项重复（不相邻）-> text_integrity FAIL（section 级）
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper" / "sections").mkdir(parents=True)
+        (tws / "paper" / "sections" / "10_evaluation.tex").write_text(
+            "\\section{模型评价与推广}\n\\subsection{模型缺点}\n\\begin{enumerate}\n"
+            "\\item 观测为删失结构，达标时间在 12 周以前的识别能力较弱。\n"
+            "\\item 高 BMI 组样本较少，推荐窗口较宽。\n"
+            "\\item 风险权重 1/3/10 是对题面定性描述的定量化，不同权重下推荐时点存在小幅移动。\n"
+            "\\item 女胎阳性样本较少，模型性能的置信区间较宽。\n"
+            "\\item 风险权重 1/3/10 是对题面定性描述的定量化，不同权重下推荐时点存在小幅移动。\n"
+            "\\end{enumerate}\n", encoding="utf-8")
+        results.append(report("T47", "非相邻重复列表项 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T48 跨问题总结节裸 G3/G4（无作用域）-> text_integrity FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper" / "sections").mkdir(parents=True)
+        (tws / "paper" / "sections" / "10_evaluation.tex").write_text(
+            "\\section{模型评价与推广}\n\\subsection{模型缺点}\n"
+            "高 BMI 组（G3/G4）样本较少（n=20 与 n=95 中的 20）。\n", encoding="utf-8")
+        results.append(report("T48", "无作用域组引用 FAIL", False,
+                              run([SCRIPTS / "text_integrity.py", "--workspace", tws, "--strict"])))
+
+    # T49 caption 含 A/B/C 但 manifest panels=[] -> figure_story FAIL（panel_declaration）
+    td, tws = method_copy()
+    try:
+        (tws / "figures").mkdir(exist_ok=True)
+        json_write(tws / "figures" / "fig_q1.meta.json",
+                   {"figure_id": "fig1", "generator": "g", "generator_sha256": "x",
+                    "source_results": [], "annotations": [], "axes": [], "panels": {}})
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["caption"] = "数据总览（A：样本结构；B：浓度趋势）"
+        manifest[0]["panels"] = []
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T49", "multi-panel 空 panels FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T50 story claim 与 result 值矛盾（crosses_zero expected=False 但实际跨 0）-> figure_story FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "results").mkdir(exist_ok=True)
+        json_write(tws / "results" / "p1_desc.json",
+                   {"two_stage": {"bmi_ci": {"low": -0.047, "high": 0.026}}})
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["story"] = {"main_message": "BMI 系数稳健（Bootstrap CI 不跨零）",
+                                "claims": [{"result_key": "p1_desc.two_stage.bmi_ci",
+                                            "predicate": "crosses_zero", "expected": False}]}
+        manifest[0]["source"] = {"source_results": [{"file": "results/p1_desc.json", "keys": []}]}
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T50", "story claim 与结果矛盾 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T51 story 说插值口径而 caption 是 Turnbull -> figure_story FAIL（stale_story_term）
+    td, tws = method_copy()
+    try:
+        (tws / "paper" / "main.tex").write_text(
+            "\\begin{figure}\\includegraphics{figures/fig_q1}"
+            "\\caption{各 BMI 组达标比例曲线（Turnbull 区间删失估计，阶梯型）}"
+            "\\label{fig:q1}\\end{figure}\n", encoding="utf-8")
+        manifest = json.loads((tws / "figures" / "figure_manifest.json").read_text(encoding="utf-8"))
+        manifest[0]["story"] = {"main_message": "高 BMI 组达标更晚（插值口径）"}
+        manifest[0]["caption"] = "各 BMI 组达标比例曲线（Turnbull 区间删失估计，阶梯型）"
+        json_write(tws / "figures" / "figure_manifest.json", manifest)
+        results.append(report("T51", "story 旧口径词 FAIL", False,
+                              run([SCRIPTS / "figure_story.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T52 support code 含本机绝对路径 -> submission_package_gate FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        make_support_zip(tws, {
+            "code/utils.py": "XLSX = r\"D:\\CUMCM2025Problems\\C题\\附件.xlsx\"\n",
+            "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        })
+        results.append(report("T52", "支撑包绝对路径 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+
+    # T53 ZIP 解压后 python problem1.py 因绝对路径失败 -> smoke FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        make_support_zip(tws, {
+            "code/problem1.py": "open(r\"C:\\Users\\Administrator\\no_such_file_xyz.xlsx\")\n",
+            "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        })
+        data_ph = tws / "fake.xlsx"
+        data_ph.write_bytes(b"fake")
+        results.append(report("T53", "clean-room smoke 绝对路径失败 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws,
+                                   "--smoke", "--data", str(data_ph)],
+                                  )))
+
+    # T54 appendix 列表 8 个但 ZIP code 有 13 个 -> submission_package_gate FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper" / "sections").mkdir(parents=True)
+        files = {"README.md": "# 运行说明\n", "requirements.txt": "pandas\n"}
+        listed = []
+        for i in range(13):
+            files[f"code/p{i}.py"] = "x\n"
+            listed.append(f"\\lstinputlisting{{../code/p{i}.py}}\n")
+        files["paper/sections/A_code.tex"] = "\\section*{附录}\n" + "".join(listed[:8])
+        files["references/literature.md"] = "| ref1 | x |\n"
+        make_support_zip(tws, files)
+        results.append(report("T54", "附录清单与 ZIP 不一致 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+
+    # T55 literature registry 6 篇 vs paper refs 8 篇 -> submission_package_gate FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "reports").mkdir()
+        (tws / "paper" / "references.tex").write_text(
+            "\\begin{thebibliography}{9}\n" + "".join(
+                f"\\bibitem{{ref{i}}} x\n" for i in range(1, 9)) + "\\end{thebibliography}\n",
+            encoding="utf-8")
+        (tws / "reports" / "method_citation_map.json").write_text(
+            json.dumps({"Turnbull": ["ref_turnbull"], "AFT": ["ref6"]}), encoding="utf-8")
+        lit = "| 编号 | 标题 |\n" + "".join(f"| ref{i} | x |\n" for i in range(1, 7))
+        make_support_zip(tws, {"README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+                               "code/a.py": "x\n",
+                               "references/literature.md": lit})
+        results.append(report("T55", "references registry 落后 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+
+    # T56 A_code.tex 用 \input{appendix_source_list.tex} 且 fragment 齐全 -> appendix_source_list PASS
+    path_ws = Path(tempfile.mkdtemp())
+    try:
+        (path_ws / "code").mkdir(parents=True)
+        (path_ws / "paper" / "sections").mkdir(parents=True)
+        (path_ws / "code" / "problem1.py").write_text('"""问题一：描述统计。"""\nx\n', encoding="utf-8")
+        (path_ws / "paper" / "appendix_source_list.tex").write_text(
+            "\\subsubsection*{problem1.py}\n\\lstinputlisting{../code/problem1.py}\n",
+            encoding="utf-8")
+        (path_ws / "paper" / "sections" / "A_code.tex").write_text(
+            "\\section*{附录}\n\\input{../appendix_source_list}\n", encoding="utf-8")
+        results.append(report("T56", "input 展开后清单一致 PASS", True,
+                              run([SCRIPTS / "appendix_source_list.py", "--workspace", path_ws, "--check"])))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(path_ws, ignore_errors=True)
+
+    # T57 contact sheet 请求 N 页必须渲染 N 页（请求 20 页 -> layout 5x4，禁止 15 页溢出）
+    try:
+        import fitz as _fitz
+        path_ws = Path(tempfile.mkdtemp())
+        try:
+            (path_ws / "paper").mkdir(parents=True)
+            (path_ws / "reports").mkdir()
+            pdf = path_ws / "paper" / "main.pdf"
+            with _fitz.open() as d:
+                for _ in range(20):
+                    d.new_page(width=595, height=842)
+                d.save(str(pdf))
+            proc = run([SCRIPTS / "visual_review.py", "--workspace", path_ws, "--pages", "20"])
+            rec = json.loads((path_ws / "reports" / "visual_review.json").read_text(encoding="utf-8"))
+            ok_layout = rec.get("contact_sheet_pages") == 20 and rec.get("contact_sheet_layout") == "5x4"
+            results.append(report("T57", "contact sheet 20 页全渲染 PASS", True, proc)
+                           if ok_layout else
+                           report("T57", "contact sheet 20 页全渲染 PASS", False,
+                                  SimpleNamespace(returncode=proc.returncode, stdout=proc.stdout,
+                                                  stderr=proc.stderr),
+                                  f"layout={rec.get('contact_sheet_layout')} pages={rec.get('contact_sheet_pages')}"))
+        finally:
+            import shutil as _sh
+            _sh.rmtree(path_ws, ignore_errors=True)
+    except ImportError:
+        print("[SKIP] T57 缺少 PyMuPDF")
+        skipped.append("T57 contact sheet（缺 PyMuPDF）")
+
+    # T58 workflow input 写 generated_values mandatory 但 README 标 optional -> docs_sync FAIL
+    repo_root = Path(__file__).resolve().parents[3]
+    repo = Path(tempfile.mkdtemp())
+    try:
+        shutil.copy2(repo_root / "workflow_spec.yaml", repo / "workflow_spec.yaml")
+        readme_src = repo_root / "README.md"
+        readme_text = readme_src.read_text(encoding="utf-8")
+        readme_text = readme_text.replace("可选的 `paper/generated_values.tex`", "`paper/generated_values.tex`")
+        (repo / "README.md").write_text(readme_text, encoding="utf-8")
+        results.append(report("T58", "generated_values 政策漂移 FAIL", False,
+                              run([SCRIPTS / "docs_sync.py", "--check", "--root", repo])))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(repo, ignore_errors=True)
+
+    # T59 methodology 输出旧 reports/figure_story_manifest.json -> docs_sync FAIL
+    repo = Path(tempfile.mkdtemp())
+    try:
+        shutil.copy2(repo_root / "workflow_spec.yaml", repo / "workflow_spec.yaml")
+        readme_src = repo_root / "README.md"
+        (repo / "README.md").write_text(readme_src.read_text(encoding="utf-8"), encoding="utf-8")
+        (repo / "skills" / "1start-mathmodel").mkdir(parents=True)
+        (repo / "skills" / "1start-mathmodel" / "SKILL.md").write_text(
+            "产出 `reports/figure_story_manifest.json`。\n", encoding="utf-8")
+        results.append(report("T59", "旧 figure_story 路径残留 FAIL", False,
+                              run([SCRIPTS / "docs_sync.py", "--check", "--root", repo])))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(repo, ignore_errors=True)
+
+    # T60 chosen PPV <= all-positive baseline 且论文有强结论词 -> deployment_utility FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "paper").mkdir(parents=True)
+        (tws / "reports").mkdir()
+        (tws / "paper" / "main.tex").write_text(
+            "本模型显著提高阳性识别效率，为临床提供预警支持。\n", encoding="utf-8")
+        (tws / "reports" / "audit.json").write_text(json.dumps({
+            "prevalence": 0.299, "chosen": {"ppv": 0.2958},
+            "all_positive": {"ppv": 0.299}}), encoding="utf-8")
+        results.append(report("T60", "部署效用无增益强结论 FAIL", False,
+                              run([SCRIPTS / "deployment_utility.py", "--workspace", tws, "--strict",
+                                   "--audit-json", "reports/audit.json"])))
+
+    # T61 simpler ablation AUPRC > primary 但无 parsimony review -> methodology FAIL
+    td, tws = method_copy()
+    try:
+        (tws / "results").mkdir(exist_ok=True)
+        json_write(tws / "results" / "p4_models.json",
+                   {"primary": {"auprc": 0.4564}, "ablation_simpler": {"auprc": 0.4722}})
+        results.append(report("T61", "无 parsimony review FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T62 算法家族选择用 outer_test 登记（宣称 nested 却用外层）-> leakage FAIL
+    td, tws = method_copy()
+    try:
+        scope = json.loads((tws / "reports" / "methodology" / "ml_operation_scope.json")
+                           .read_text(encoding="utf-8"))
+        scope["operations"].append({"operation": "algorithm_family_selection",
+                                    "allowed_data": "outer_test"})
+        json_write(tws / "reports" / "methodology" / "ml_operation_scope.json", scope)
+        results.append(report("T62", "家族选择 outer_test FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T63 support 引用不存在的内部 report -> submission_package_gate FAIL（dangling）
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        make_support_zip(tws, {
+            "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+            "code/utils.py": "# 口径/方法细节见 reports/ANALYSIS_MODELING_REPORT.md\n",
+        })
+        results.append(report("T63", "dangling 内部路径引用 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+
+    # T64 核心结果 .get(key, 0.0395) 硬编码 fallback -> leakage FAIL
+    with tempfile.TemporaryDirectory() as td:
+        tws = Path(td)
+        (tws / "code").mkdir(parents=True)
+        (tws / "code" / "woman_level.py").write_text(
+            "thr = cfg.get(\"threshold\", 0.0395)\n", encoding="utf-8")
+        results.append(report("T64", "硬编码 fallback FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""
     print(f"\nRESULT: {len(results) - n_fail}/{len(results)} 通过{suffix}")

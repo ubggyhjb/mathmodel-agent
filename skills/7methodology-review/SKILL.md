@@ -1,15 +1,15 @@
 ---
 name: 7methodology-review
-description: "数学建模竞赛方法学审查阶段（v3，独立强制阶段）。用于建模前/中审计数据生成机制与观测机制、统计假设一致性、删失结构、优化退化、模型必要性、ML 泄露、样本量与不确定性，并做结论强度校准，为建模与论文奠定方法学合法性。"
+description: "数学建模竞赛方法学审查阶段（独立强制阶段）。用于建模前/中审计数据生成机制与观测机制、统计假设一致性、删失结构、优化退化、模型必要性、ML 泄露、样本量与不确定性，并做结论强度校准，为建模与论文奠定方法学合法性。"
 whenToUse: "数模工作流中完成建模设计（2analysis-modeling）后、进入代码实现与绘图（3coding-visual）前，进行方法学审计与假设一致性检查时使用（通常由 1start-mathmodel 调用）。"
 allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
-# 方法学审查（v3 Methodology Review）
+# 方法学审查（Methodology Review）
 
 本 skill 是 `2analysis-modeling` 之后、`3coding-visual` 之前的独立强制阶段（时序：`2analysis-modeling → 7methodology-review → 3coding-visual → 4drawio → 5writing → 6verity`）。它不写代码、不画图、不排论文；它把"模型定义是否成立"这件事从流程里显式拎出来，防止把一条不成立的方法学假设一路带到代码、图表和论文里。
 
-本 skill 的产出是 `reports/methodology/*.json` 一组方法学登记文件 + **`reports/FINAL_MODEL_SPEC.json`（v4 可执行模型契约）** + `reports/figure_story_manifest.json`，作为 `6verity` 阶段 v4 三门禁（methodology / leakage / figure_story）的**输入**，其中 FINAL_MODEL_SPEC 同时是 `3coding-visual`（只实现它）与 `5writing`（只描述它）的唯一模型接口。本阶段不满足，后续阶段必须停下修正。
+本 skill 的产出是 `reports/methodology/*.json` 一组方法学登记文件 + **`reports/FINAL_MODEL_SPEC.json`（可执行模型契约）** + `figures/figure_manifest.json`（draft），作为 `6verity` 阶段（methodology / leakage / figure_story 门禁）的**输入**，其中 FINAL_MODEL_SPEC 同时是 `3coding-visual`（只实现它）与 `5writing`（只描述它）的唯一模型接口。本阶段不满足，后续阶段必须停下修正。
 
 ## 数学建模规范参考
 
@@ -42,7 +42,7 @@ allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_sear
 | `reports/methodology/ml_operation_scope.json` | Step 6 | ML 操作数据范围登记 |
 | `reports/methodology/sample_sizes.json` | Step 7 | 样本量与不确定性 |
 | `reports/FINAL_MODEL_SPEC.json` | 汇总（v4 强制） | **可执行模型契约**：逐问题声明 outcome/观测机制/likelihood/协变量/result_keys/figure_ids/paper_section（schema 见 `docs/FINAL_MODEL_SPEC.schema.md`）。`3coding-visual` 只实现它、`5writing` 只描述它、`6verity` 逐问核验它 |
-| `reports/figure_story_manifest.json` | （`3coding-visual`/`6verity` 用） | 每张主图的 Figure Story 定义（v4 迁移到 `figures/figure_manifest.json` 唯一清单） |
+| `figures/figure_manifest.json` | （唯一清单，本阶段建 draft，`3coding-visual` 完成后置 approved） | 每张主图的 Figure Story 定义 + panels/caption/claims（文档见 docs/figure_manifest.schema.md；v4.1 起废除旧 reports 路径，唯一清单） |
 
 **FINAL_MODEL_SPEC 生成规则**：完成 Step 1-7 后，为每个子问题写一条 problems[]（与题面问题数量一致）；
 同一 `outcome.id` 跨问题必须同一种删失机制（若不同，`mechanism_change_rationale` 必须非空并给证据）；
@@ -258,4 +258,4 @@ python skills/6verity/scripts/attack_questions.py --workspace .
 ## 硬性返回触发
 
 - Step 1–8 任何一项审计不通过（删失未分类、假设矛盾、退化未检测、必要性未分类、泄露未登记、样本量未核查）→ 回 `2analysis-modeling` 修正建模口径后再重跑本 skill。
-- Step 9 的 v3 三门禁任一 FAIL → 修正后重跑，禁止带病进入 `3coding-visual`。
+- Step 9 的三门禁任一 FAIL → 修正后重跑，禁止带病进入 `3coding-visual`。

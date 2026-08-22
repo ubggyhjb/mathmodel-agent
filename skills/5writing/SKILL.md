@@ -133,15 +133,15 @@ ls "$SKILL_DIR/templates/zh/<竞赛>-latex/main.tex" 2>/dev/null && echo "OK" ||
 
 ### 步骤 3：构建图表规划
 
-在写正文各节之前，根据 `figures/*.pdf`、`reports/RESULTS_REPORT.md`，以及 `reports/DRAWIO_REPORT.md`（如果存在）构建图表规划：
+在写正文各节之前，先读 `figures/figure_manifest.json`（**唯一事实源**），按已批准的图清单规划插位：
 
 ```text
-图表规划
-fig_roadmap.pdf -> 引言/问题重述
-fig_flow_q1.pdf -> 问题一模型构建
-fig_flow_q2.pdf -> 问题二模型构建
-fig_pipeline.pdf -> 数据预处理/方法节
-结果图 -> 对应的结果节
+图表规划（v4.2 R-05：只插 manifest 已批准的 figure）
+1. 先读 figures/figure_manifest.json 全部条目（id / files / caption / visual_priority / panels）
+2. 每个小节：只插入 manifest 中已登记且 status=approved 的 figure（caption 直接从 manifest 复制）
+3. 禁止为"完整性"自行新增 roadmap/flow/pipeline/技术路线图（concept figure ≤1，
+   且只在 4drawio 阶段批准过才可引入）
+4. 若某节无已批准图：用表格或文字表达，不擅自新画
 ```
 
 图片路径相对于写入该图片的文件：写在 `paper/main.typ` 或 `paper/main.tex` 中通常用 `../figures/xxx.pdf`，写在 `paper/sections/*.typ` 或 `paper/sections/*.tex` 中通常用 `../../figures/xxx.pdf`。
