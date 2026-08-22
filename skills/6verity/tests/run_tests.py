@@ -1108,6 +1108,164 @@ def main():
         finally:
             td.cleanup()
 
+    # ============ v4.3 decision / provenance / uncertainty regression（T75-T79） ============
+
+    def _good_bind_ws(tws, dist="weibull", fsid="Q1.feat.v1"):
+        _v2_spec(tws, dist=dist, fsid=fsid)
+        _vars(tws)
+        (tws / "results").mkdir(exist_ok=True)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        json_write(tws / "results" / "p0.json", {"a": 1, **_meta_ok(spec_hash, dist=dist, fsid=fsid)})
+        json_write(tws / "results" / "RESULT_REGISTRY.json",
+                   {"schema_version": 1, "artifacts": [{"file": "results/p0.json",
+                                                        "role": "paper_authority", "problem_id": "Q1",
+                                                        "requires_model_spec_binding": True}]})
+        return spec_hash
+
+    def _decision(tws, d):
+        (tws / "reports" / "decisions").mkdir(parents=True, exist_ok=True)
+        json_write(tws / "reports" / "decisions" / "MODEL_SELECTION_DECISION.json",
+                   {"schema_version": 1, "decisions": [d]})
+
+    def _paper(tws, extra):
+        body = ("\\section{方法}\n在控制孕妇个体随机效应后，条件残差近似独立。\n"
+                "删失结构为区间删失，候选模型采用 Turnbull 与 interval-censored Weibull。\n"
+                "组样本量充足。\n" + extra + "\n")
+        (tws / "paper" / "main.tex").write_text(body, encoding="utf-8")
+
+    # T75 论文声明"预指定"但 decision frozen_at 晚于结果生成 -> FAIL
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        _paper(tws, "按预指定解释性优先级保留 22 维模型。")
+        _decision(tws, {"decision_id": "Q1-D01", "decision_type": "feature_set",
+                        "candidate_ids": ["A", "B"], "frozen_at": "2099-01-01T00:00:00+08:00",
+                        "before_result_artifacts": ["results/p0.json"],
+                        "selection_rule": "pre_specified_primary", "selected": "B",
+                        "rejected": ["A"], "exceptions": []})
+        results.append(report("T75", "预指定无时序证据 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T75.good 决策冻结早于结果 -> PASS
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        _paper(tws, "按预指定解释性优先级保留 22 维模型。")
+        _decision(tws, {"decision_id": "Q1-D01", "decision_type": "feature_set",
+                        "candidate_ids": ["A", "B"], "frozen_at": "2020-01-01T00:00:00+08:00",
+                        "before_result_artifacts": ["results/p0.json"],
+                        "selection_rule": "pre_specified_primary", "selected": "B",
+                        "rejected": ["A"], "exceptions": []})
+        results.append(report("T75.good", "预指定时序可证明 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T76 one_se_choose_simpler 但选择更复杂模型且无例外 -> FAIL
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        _decision(tws, {"decision_id": "Q1-D02", "decision_type": "feature_set",
+                        "frozen_at": "2020-01-01T00:00:00+08:00", "before_result_artifacts": ["results/p0.json"],
+                        "selection_rule": "one_se_choose_simpler", "selected": "B", "rejected": ["A"],
+                        "exceptions": [], "selected_complexity": 22,
+                        "complexity_of_best_simple": 19})
+        results.append(report("T76", "one-SE 选复杂模型无例外 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T76.good one-SE 选复杂但有例外 -> PASS
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        _decision(tws, {"decision_id": "Q1-D02", "decision_type": "feature_set",
+                        "frozen_at": "2020-01-01T00:00:00+08:00", "before_result_artifacts": ["results/p0.json"],
+                        "selection_rule": "one_se_choose_simpler", "selected": "B", "rejected": ["A"],
+                        "exceptions": [{"id": "interpretability_priority", "note": "临床可解释性优先"}],
+                        "selected_complexity": 22, "complexity_of_best_simple": 19})
+        results.append(report("T76.good", "one-SE 例外声明充分 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T77 家族选择声明 inner_cv 但缺逐折 provenance -> leakage FAIL
+    td, tws = method_copy()
+    try:
+        scope = json.loads((tws / "reports" / "methodology" / "ml_operation_scope.json")
+                           .read_text(encoding="utf-8"))
+        scope["operations"].append({"operation": "algorithm_family_selection",
+                                    "allowed_data": "inner_cv"})
+        json_write(tws / "reports" / "methodology" / "ml_operation_scope.json", scope)
+        results.append(report("T77", "nested 家族选择无 provenance FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T77.good 完整逐折 provenance -> PASS
+    td, tws = method_copy()
+    try:
+        scope = json.loads((tws / "reports" / "methodology" / "ml_operation_scope.json")
+                           .read_text(encoding="utf-8"))
+        scope["operations"].append({"operation": "algorithm_family_selection",
+                                    "allowed_data": "inner_cv"})
+        json_write(tws / "reports" / "methodology" / "ml_operation_scope.json", scope)
+        prov = {"outer_folds": [{
+            "outer_fold": f, "inner_candidates": ["lr", "rf", "gbdt"],
+            "selected_family": "lr", "selection_data_hash": f"inner{f}",
+            "outer_test_group_hash": f"outer{f}"} for f in (1, 2)]}
+        json_write(tws / "reports" / "methodology" / "family_selection_provenance.json", prov)
+        results.append(report("T77.good", "家族选择 provenance 齐全 PASS", True,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T78 provenance 缺 inner-only group 字段 -> FAIL
+    td, tws = method_copy()
+    try:
+        scope = json.loads((tws / "reports" / "methodology" / "ml_operation_scope.json")
+                           .read_text(encoding="utf-8"))
+        scope["operations"].append({"operation": "algorithm_family_selection",
+                                    "allowed_data": "inner_cv"})
+        json_write(tws / "reports" / "methodology" / "ml_operation_scope.json", scope)
+        prov = {"outer_folds": [{"outer_fold": 1, "inner_candidates": ["lr"], "selected_family": "lr"}]}
+        json_write(tws / "reports" / "methodology" / "family_selection_provenance.json", prov)
+        results.append(report("T78", "provenance 缺 hash 字段 FAIL", False,
+                              run([SCRIPTS / "leakage_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T79 sampling CI 直接充当推荐窗口（无 construction_rule）-> methodology FAIL
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        doc = json.loads((tws / "results" / "p0.json").read_text(encoding="utf-8"))
+        doc["uncertainty"] = {"sampling_ci": {"level": 0.95, "low": 13.0, "high": 24.2},
+                              "decision_window": {"low": None, "high": None, "construction_rule": None}}
+        json_write(tws / "results" / "p0.json", doc)
+        _paper(tws, "95\\% 置信区间为 13.0-24.2 周，推荐窗口为 13.0-24.2 周。")
+        results.append(report("T79", "CI 充当推荐窗口 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T79.good 显式 construction_rule -> PASS
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        doc = json.loads((tws / "results" / "p0.json").read_text(encoding="utf-8"))
+        doc["uncertainty"] = {"sampling_ci": {"level": 0.95, "low": 13.0, "high": 24.2},
+                              "decision_window": {"low": None, "high": None,
+                                                  "construction_rule": "按点估计与 95% CI 结合 q 约束、整数周与安全边界的规则构造"}}
+        json_write(tws / "results" / "p0.json", doc)
+        _paper(tws, "95\\% 置信区间为 13.0-24.2 周，推荐窗口为 13.0-24.2 周。")
+        results.append(report("T79.good", "窗口构造规则显式 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

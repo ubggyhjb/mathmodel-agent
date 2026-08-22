@@ -105,8 +105,25 @@ final_review:
       scope: independence/repeated measures/censoring/leakage/bias/threshold selection/CI/overfitting
     - id: C
       name: 科学编辑与视觉审稿人
-      scope: 摘要/图/表/标粗/视觉层级/30秒可理解
+      scope: 摘要/图/表/标粗/视觉层级/30秒可理解; page composition（orphan spill/recoverable underfill/float placement/first-reference proximity）
   veto:
     - "Reviewer B critical: leakage / wrong likelihood / invalid censoring / invalid test protocol"
-    - "Reviewer C submission blocker: figure blank / table clipped / unresolved reference"
+    - "Reviewer C submission blocker: figure blank / table clipped / unresolved reference / orphan spill / near-empty continuation page / isolated heading或caption / broken abstract-keywords"
   pass_rule: "总分 ≥70 且核心维度（建模求解、结果检验）≥该维满分50%，其余维度≥40%"
+
+# v4.3：机器可读控制面——工作流依赖 verdict 字段驱动，禁止自然语言"建议考虑"式回滚
+control_plane:
+  verdicts: ["PASS", "WARN", "BLOCKER", "CRITICAL"]
+  failure_events: "reports/methodology/failure_events.json"
+  failure_events_schema:
+    code: string          # 如 PARSIMONY_PRIMARY_LOST
+    severity: "blocker | critical"
+    invalidate: ["<result key / model id>"]
+    return_to: string     # 如 methodology_review / coding_visual
+    status: "open | resolved"
+    resolved_at: string   # status=resolved 时必填
+  rules:
+    - "任一 failure.event severity∈{blocker,critical} 且 status=open -> 最终验收 BLOCKER（methodology gate FAIL）"
+    - "典型触发：assumption failed / family selection leakage / model has no practical gain / optimization degenerates / simpler model dominates / calibration failed but probability wording required / result contradicts core hypothesis"
+    - "不能让 Agent 为『把原计划写圆』而继续推向论文阶段：failure event 的 return_to 即机器化回滚目标阶段"
+

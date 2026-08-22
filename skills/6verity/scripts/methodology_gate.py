@@ -635,6 +635,151 @@ def _check_result_metadata(ws, spec, findings, strict):
                        f"features.feature_set_id={fsid} 不一致", strict)
 
 
+def _parse_ts(s: str):
+    import datetime as _dt
+    s = str(s).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            t = _dt.datetime.strptime(s, fmt)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=_dt.timezone.utc)
+            return t.timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _artifact_ts(ws, rel: str):
+    """结果文件生成时间：优先 _meta.generated_at / generated_at，否则 mtime。"""
+    p = ws / rel
+    if not p.is_file():
+        return None
+    doc = gc.load_json(p, None)
+    if isinstance(doc, dict):
+        meta = doc.get("_meta") or {}
+        g = meta.get("generated_at") or doc.get("generated_at")
+        if g:
+            t = _parse_ts(g)
+            if t is not None:
+                return t
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(p.stat().st_mtime,
+                                      tz=_dt.timezone.utc).timestamp()
+
+
+PRE_SPECIFIED_WORDS = ("预指定", "预先指定", "事前指定", "pre-specified", "pre_specified")
+
+
+def check_selection_decisions(ws, spec, text, findings, strict):
+    """v4.3（P0-05 / T75/T76）：科学决策账本——"预指定"必须有可验证的时序证据；
+    one-se 规则必须偏向更简单模型（无例外）。"""
+    dec_path = ws / "reports" / "decisions" / "MODEL_SELECTION_DECISION.json"
+    decisions = gc.load_json(dec_path, None)
+    decs = []
+    if isinstance(decisions, dict):
+        decs = [d for d in (decisions.get("decisions") or []) if isinstance(d, dict)]
+    pre_used = bool(re.search(r"预指定|预先指定|事前指定|pre[- ]?specified", text, re.I))
+    spec_pre = any(str((p.get("selection") or {}).get("model_family", "")) == "pre_specified"
+                   or str((p.get("selection") or {}).get("feature_selection", "")) == "pre_specified"
+                   for p in (spec.get("problems") or []) if isinstance(p, dict))
+    if (pre_used or spec_pre) and not decs:
+        _violation(findings, "decision",
+                   "论文/契约声明『预指定』但缺 reports/decisions/MODEL_SELECTION_DECISION.json——"
+                   "预指定无法从支撑材料证明（P0-05/T75）", strict)
+        return
+    for d in decs:
+        did = str(d.get("decision_id", "?"))
+        frozen = _parse_ts(str(d.get("frozen_at", "")))
+        if frozen is None:
+            findings.append(_warn("decision",
+                                  f"{did} 缺可解析 frozen_at——预指定时序无法验证"))
+            continue
+        for rel in [str(r) for r in (d.get("before_result_artifacts") or []) if str(r)]:
+            t = _artifact_ts(ws, rel)
+            if t is None:
+                _violation(findings, "decision",
+                           f"{did} 声明 before_result_artifacts={rel} 但文件不存在/无时间戳——"
+                           f"冻结时序不可证明", strict)
+            elif frozen > t:
+                _violation(findings, "decision",
+                           f"{did} frozen_at={d.get('frozen_at')} 晚于结果 {rel}（生成 {t:.0f} vs 冻结 {frozen:.0f}）——"
+                           f"『预指定』实际是事后合理化（P0-05/T75）", strict)
+        rule = str(d.get("selection_rule", ""))
+        sel_cx = d.get("selected_complexity")
+        best_cx = d.get("complexity_of_best_simple")
+        if rule == "one_se_choose_simpler" and isinstance(sel_cx, (int, float)) and isinstance(best_cx, (int, float)):
+            if sel_cx > best_cx and not (d.get("exceptions") or []):
+                _violation(findings, "decision",
+                           f"{did} selection_rule=one_se_choose_simpler 但选择复杂度更高模型 "
+                           f"（selected={sel_cx} vs one-SE 内更简 {best_cx}）且未声明 exceptions——"
+                           f"one-SE 应偏向更简单模型（P0-05/T76）", strict)
+            elif sel_cx > best_cx:
+                findings.append(_warn("decision",
+                                      f"{did} 选择更复杂模型（{sel_cx}>{best_cx}）但有 exceptions "
+                                      f"{[str(e) for e in d.get('exceptions')]}——人工确认例外充分"))
+
+
+def check_typed_uncertainty(ws, spec, findings, strict):
+    """v4.3（§7/T79）：sampling CI 不得直接充当"推荐/决策窗口"——除非结果 JSON
+    声明了 decision_window.construction_rule。"""
+    text = scan_paper_text(ws)
+    if "推荐窗口" not in text and "决策窗口" not in text:
+        return
+    res_dir = ws / "results"
+    if not res_dir.is_dir():
+        return
+    # 收集带 uncertainty 结构的结果文件（优先 registry 绑定文件）
+    res_jsons = sorted(p for p in res_dir.glob("*.json") if p.name != "RESULT_REGISTRY.json")
+    docs = []
+    for rj in res_jsons:
+        doc = gc.load_json(rj, None)
+        if isinstance(doc, dict) and isinstance(doc.get("uncertainty"), dict):
+            docs.append((rj.name, doc))
+    if not docs:
+        findings.append(_warn("uncertainty",
+                              "论文出现『推荐/决策窗口』但无任何结果 JSON 声明 typed uncertainty——"
+                              "窗口构造规则未机器化"))
+        return
+    for name, doc in docs:
+        u = doc.get("uncertainty") or {}
+        dw = u.get("decision_window") if isinstance(u.get("decision_window"), dict) else None
+        if dw is None:
+            continue
+        rule = dw.get("construction_rule")
+        if rule:
+            continue
+        sid = (doc.get("_meta") or {}).get("problem_id", "")
+        # 该问题语境：寻找"（95% 置信|CI…）…推荐窗口"或"推荐窗口 … 置信"邻近表述
+        hit = re.search(r"[^。；]{0,80}(?:95\s*%|置信|CI)[^。；]{0,40}(?:推荐窗口|决策窗口)", text) \
+            or re.search(r"[^。；]{0,40}(?:推荐窗口|决策窗口)[^。；]{0,80}(?:95\s*%|置信|CI)", text)
+        if hit:
+            _violation(findings, "uncertainty",
+                       f"{name}（问题 {sid or '?'}）声明 sampling_ci 但 decision_window.construction_rule 为空，"
+                       f"而论文将『置信区间』与『推荐/决策窗口』混用：…{hit.group(0)[:80]}…"
+                       f"——CI 不得直接充当推荐窗口（§7/T79）", strict)
+        else:
+            findings.append(_warn("uncertainty",
+                                  f"{name} 的 decision_window.construction_rule 为空——建议补齐窗口构造规则或"
+                                  f"论文避免『推荐窗口』措辞"))
+
+
+def check_failure_events(ws, findings, strict):
+    """v4.3（§16/§18）：failure-driven rollback——machine-readable 失败事件。
+    reports/methodology/failure_events.json 中 severity∈{blocker,critical} 且 status=open
+    的事件阻止最终 PASS（控制面 BLOCKER）。"""
+    events = gc.load_json(ws / "reports" / "methodology" / "failure_events.json", None)
+    if not isinstance(events, dict) or not isinstance(events.get("events"), list):
+        return
+    for e in events["events"]:
+        sev = str(e.get("severity", "")).lower()
+        st = str(e.get("status", "")).lower()
+        if sev in ("blocker", "critical") and st != "resolved":
+            _violation(findings, "failure_events",
+                       f"failure event {e.get('code', '?')}（severity={sev}, status={st}）未关闭——"
+                       f"按 control_plane 回滚到 {e.get('return_to', '?')}，禁止继续推向论文阶段（§16）",
+                       strict)
+
+
 def conditional_required_inputs(dgp, spec, mdir, strict, findings):
     """v4（任务书 6 条）：方法学输入条件必需（适用就硬 FAIL，不适用不机械要求）。
        - DGP 存在删除失      -> censoring_report.json 必须存在；
@@ -755,6 +900,12 @@ def main(argv=None):
     conditional_required_inputs(dgp, spec, mdir, args.strict, findings)
     # v4.2（P1-03/T61）：parsimony reopen——更简 ablation 不差于 primary 必须解释
     check_parsimony_reopen(ws, spec, findings, args.strict)
+    # v4.3（P0-05/T75/T76）：科学决策账本（预指定时序 / one-SE 方向）
+    check_selection_decisions(ws, spec, text, findings, args.strict)
+    # v4.3（§7/T79）：typed uncertainty——CI 不得直接充当推荐窗口
+    check_typed_uncertainty(ws, spec, findings, args.strict)
+    # v4.3（§16/§18）：failure-driven rollback——未关闭的 BLOCKER/CRITICAL 阻止 PASS
+    check_failure_events(ws, findings, args.strict)
 
     if dgp is not None:
         check_dgp(dgp, text, args.strict, findings)

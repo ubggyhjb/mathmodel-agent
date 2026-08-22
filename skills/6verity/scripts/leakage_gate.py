@@ -80,6 +80,59 @@ def check_scope(scope, strict, findings):
     return bool(family_ops)
 
 
+def check_family_provenance(ws, scope_has_family, strict, findings):
+    """v4.3（P0-06 / T77/T78）：algorithm-family winner's curse——声称 nested 家族选择
+    必须有逐折运行时 provenance，证明选择接触的只有 inner 数据。
+    路径：reports/methodology/family_selection_provenance.json。"""
+    if not scope_has_family:
+        return
+    scope = gc.load_json(ws / SCOPE_REL, None)
+    ops = (scope or {}).get("operations", [])
+    fam = next((o for o in ops if o.get("operation") == "algorithm_family_selection"), None)
+    allowed = str((fam or {}).get("allowed_data", ""))
+    prov = gc.load_json(ws / "reports" / "methodology" / "family_selection_provenance.json", None)
+    if allowed == "pre_specified":
+        # 方案 A：正式预注册——不要求逐折选择，但要求决策账本存在
+        dec = gc.load_json(ws / "reports" / "decisions" / "MODEL_SELECTION_DECISION.json", None)
+        if not isinstance(dec, dict) or not (dec.get("decisions") or []):
+            gc_violation(findings, "family_provenance",
+                         f"algorithm_family_selection=pre_specified 但缺 "
+                         f"reports/decisions/MODEL_SELECTION_DECISION.json——预指定无法证明（P0-05）",
+                         strict)
+        findings.append({"level": "OK", "check": "family_provenance",
+                         "message": "家族选择为预指定（方案 A），已要求决策账本证明"})
+        return
+    if allowed != "inner_cv":
+        return  # 非法 allowed_data 已在 check_scope 报
+    if not isinstance(prov, dict) or not isinstance(prov.get("outer_folds"), list) or not prov["outer_folds"]:
+        gc_violation(findings, "family_provenance",
+                     "algorithm_family_selection 声称 nested（inner_cv）但缺 "
+                     "reports/methodology/family_selection_provenance.json（逐折选择 provenance）——"
+                     "无法证明家族选择未接触外层测试（P0-06/T77）", strict)
+        return
+    prov_ok = True
+    for f in prov["outer_folds"]:
+        if not isinstance(f, dict):
+            continue
+        fid = f.get("outer_fold", "?")
+        missing = [k for k in ("inner_candidates", "selected_family", "selection_data_hash",
+                               "outer_test_group_hash") if not f.get(k)]
+        if missing:
+            gc_violation(findings, "family_provenance",
+                         f"outer fold {fid} 缺家族选择 provenance 字段：{missing}"
+                         f"（inner-only group hash 必须可复验，T78）", strict)
+            prov_ok = False
+        elif str(f.get("selection_data_hash")) == str(f.get("outer_test_group_hash")):
+            gc_violation(findings, "family_provenance",
+                         f"outer fold {fid} 的 selection_data_hash 与 outer_test_group_hash 相同——"
+                         f"选择接触了外层测试（T78）", strict)
+            prov_ok = False
+    if prov_ok:
+        findings.append({"level": "OK", "check": "family_provenance",
+                         "message": f"家族选择内层 provenance 通过："
+                                    f"{[f.get('selected_family') for f in prov['outer_folds'] if isinstance(f, dict)]}"})
+
+
 def check_runtime_audit(ws, strict, findings):
     """v4 运行时 fold provenance：leakage_audit.json 的实际执行证据。"""
     doc = gc.load_json(ws / AUDIT_REL, None)
@@ -207,7 +260,8 @@ def main(argv=None):
     if scope is None and args.strict:
         gc_violation(findings, "scope", f"{SCOPE_REL} 缺失：未登记 ML 数据使用范围（7methodology-review 强制）", args.strict)
     else:
-        check_scope(scope, args.strict, findings)
+        fam = check_scope(scope, args.strict, findings)
+        check_family_provenance(ws, fam, args.strict, findings)
     check_paper_claims(ws, args.strict, findings)
     check_runtime_audit(ws, args.strict, findings)
     check_code_heuristics(ws, findings)
