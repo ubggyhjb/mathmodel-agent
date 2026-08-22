@@ -1285,6 +1285,66 @@ def main():
     finally:
         td.cleanup()
 
+    # T80 uncalibrated_score 但论文写"患病概率" -> methodology FAIL
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        spec["problems"][0]["prediction_output"] = {"type": "uncalibrated_score",
+                                                    "probability_interpretation_allowed": False,
+                                                    "calibration": "none"}
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        json_write(tws / "results" / "p0.json", {"a": 1, **_meta_ok(spec_hash)})
+        _paper(tws, "模型输出估计的患病概率为 0.24。")
+        results.append(report("T80", "概率词违反 score 契约 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T80.good 未校准得分仅称模型得分 -> PASS
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        spec = json.loads((tws / "reports" / "FINAL_MODEL_SPEC.json").read_text(encoding="utf-8"))
+        spec["problems"][0]["prediction_output"] = {"type": "uncalibrated_score",
+                                                    "probability_interpretation_allowed": False,
+                                                    "calibration": "none"}
+        json_write(tws / "reports" / "FINAL_MODEL_SPEC.json", spec)
+        spec_hash = _hl.sha256((tws / "reports" / "FINAL_MODEL_SPEC.json").read_bytes()).hexdigest()
+        json_write(tws / "results" / "p0.json", {"a": 1, **_meta_ok(spec_hash)})
+        _paper(tws, "模型输出为未校准风险得分（未做概率校准，不作概率解释），仅用于排序。")
+        results.append(report("T80.good", "得分语义合规 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T81 untestable 假设被写"经验证成立" -> methodology FAIL
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        json_write(tws / "reports" / "methodology" / "statistical_assumptions.json",
+                   {"assumptions": [{"id": "A1", "text": "测量无系统偏差",
+                                     "evidence_type": "untestable_from_provided_data"}]})
+        _paper(tws, "该假设经验证成立，测序平台无系统偏差。")
+        results.append(report("T81", "不可验证假设称成立 FAIL", False,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
+    # T81.good 标注为工作假设/外部不可验证 -> PASS
+    td, tws = method_copy()
+    try:
+        _good_bind_ws(tws)
+        json_write(tws / "reports" / "methodology" / "statistical_assumptions.json",
+                   {"assumptions": [{"id": "A1", "text": "测量无系统偏差",
+                                     "evidence_type": "untestable_from_provided_data"}]})
+        _paper(tws, "该假设为工作假设，外部不可完全验证，故仅作边界说明。")
+        results.append(report("T81.good", "假设边界表述合规 PASS", True,
+                              run([SCRIPTS / "methodology_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        td.cleanup()
+
     # ============ v4.3 brainstorm contracts regression（T65-T69，任务书 v4.3 §12） ============
 
     def _idea_ws(fail_cond_ok=True, with_i10=False, spec_idea="Q1-I02", primary="Q1-I02",

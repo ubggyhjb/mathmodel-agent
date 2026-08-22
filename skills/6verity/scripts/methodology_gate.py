@@ -780,6 +780,45 @@ def check_failure_events(ws, findings, strict):
                        strict)
 
 
+def check_score_semantics(spec, text, findings, strict):
+    """v4.3（§8/T80）：prediction_output=uncalibrated_score 时论文禁用概率词——
+    『发生概率/患病概率/校准概率/风险概率/发病概率』出现即 FAIL（除非 calibration artifact 存在）。"""
+    probs = [p for p in (spec.get("problems") or [])
+             if isinstance(p, dict) and (p.get("prediction_output") or {}).get("type") == "uncalibrated_score"]
+    if not probs:
+        return
+    FORBIDDEN = ["发生概率", "患病概率", "校准概率", "风险概率", "发病概率", "阳性概率"]
+    calibration = any((p.get("prediction_output") or {}).get("calibration") not in (None, "", "none")
+                      for p in probs)
+    if calibration:
+        return
+    for w in FORBIDDEN:
+        for m in re.finditer(re.escape(w), text):
+            ctx = text[max(0, m.start() - 40):m.end() + 40]
+            if re.search(r"未|不作|不做|禁止|不应|非", ctx):
+                continue  # 否定语境（如"未做概率校准，不作概率解释"）
+            _violation(findings, "score_semantics",
+                       f"论文将未校准得分写成『{w}』：…{ctx[:70]}…——uncalibrated_score "
+                       f"只能称模型得分/风险得分/排序分数（T80）", strict)
+
+
+def check_assumption_claims(spec, ws, text, findings, strict):
+    """v4.3（§9/T81）：evidence_type=untestable_from_provided_data 的假设不得写『经验证成立』。"""
+    assump = gc.load_json(ws / M_DIR_REL / "statistical_assumptions.json", None)
+    if not isinstance(assump, dict):
+        return
+    untestable = []
+    for a in assump.get("assumptions") or []:
+        if isinstance(a, dict) and str(a.get("evidence_type", "")) == "untestable_from_provided_data":
+            untestable.append(str(a.get("id", a.get("name", "?"))))
+    if not untestable:
+        return
+    for m in re.finditer(r"该假设[^。；]{0,20}(?:经验证|经证实|已验证|验证成立|已证实)", text):
+        _violation(findings, "assumption_claims",
+                   f"外部不可验证假设 {untestable} 被写成『{m.group(0)[:40]}』——"
+                   f"untestable_from_provided_data 不得写「经验证成立」（T81）", strict)
+
+
 def conditional_required_inputs(dgp, spec, mdir, strict, findings):
     """v4（任务书 6 条）：方法学输入条件必需（适用就硬 FAIL，不适用不机械要求）。
        - DGP 存在删除失      -> censoring_report.json 必须存在；
@@ -904,6 +943,10 @@ def main(argv=None):
     check_selection_decisions(ws, spec, text, findings, args.strict)
     # v4.3（§7/T79）：typed uncertainty——CI 不得直接充当推荐窗口
     check_typed_uncertainty(ws, spec, findings, args.strict)
+    # v4.3（§8/T80）：uncalibrated score 禁用概率词
+    check_score_semantics(spec, text, findings, args.strict)
+    # v4.3（§9/T81）：不可验证假设不得写"经验证成立"
+    check_assumption_claims(spec, ws, text, findings, args.strict)
     # v4.3（§16/§18）：failure-driven rollback——未关闭的 BLOCKER/CRITICAL 阻止 PASS
     check_failure_events(ws, findings, args.strict)
 
