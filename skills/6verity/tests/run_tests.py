@@ -1379,6 +1379,85 @@ def main():
     finally:
         td.cleanup()
 
+    # ============ v4.3 final page composition regression（T95-T99，任务书 v4.3 §29A） ============
+    try:
+        import fitz as _fitz
+
+        def _pdf_ws(pages):
+            """pages: list of str；构造 project.manifest(latex 无源) + paper/main.pdf。
+            文本按行插入（每行 56 字符、行距 16pt），嵌入微软雅黑保证中文可提取。"""
+            _td = tempfile.TemporaryDirectory()
+            tws = Path(_td.name)
+            (tws / "paper").mkdir(parents=True)
+            (tws / "reports").mkdir()
+            (tws / "project.manifest.json").write_text(
+                json.dumps({"schema_version": 1, "engine": "latex", "entry": "paper/main.tex"}),
+                encoding="utf-8")
+            fontfile = r"C:\Windows\Fonts\msyh.ttc"
+            import textwrap as _tw
+            with _fitz.open() as d:
+                for txt in pages:
+                    pg = d.new_page(width=595, height=842)
+                    y = 100
+                    for line in _tw.wrap(txt, 38)[:40]:
+                        pg.insert_text((72, y), line, fontsize=10, fontfile=fontfile,
+                                       fontname="msyh", encoding="utf-8")
+                        y += 16
+                d.save(str(tws / "paper" / "main.pdf"))
+            return _td, tws
+
+        # T95 摘要+关键词跨页（关键词尾部 3 字溢出第 2 页）-> orphan_text_spill FAIL
+        _td, tws = _pdf_ws(["摘要" + "模型描述" * 60 + "关键词：A B C D E F",
+                            "体判定"])
+        try:
+            results.append(report("T95", "关键词尾部溢出 FAIL", False,
+                                  run([SCRIPTS / "layout_gate.py", "--workspace", tws])))
+        finally:
+            _td.cleanup()
+
+        # T95.good 摘要+关键词完整同页 -> PASS
+        _td, tws = _pdf_ws(["摘要" + "模型描述" * 60 + "关键词：A B C D E F"])
+        try:
+            results.append(report("T95.good", "摘要关键词同页 PASS", True,
+                                  run([SCRIPTS / "layout_gate.py", "--workspace", tws])))
+        finally:
+            _td.cleanup()
+
+        # T96 近空延续页（第 2 页仅 2 字，第 3 页继续正文）-> FAIL
+        _td, tws = _pdf_ws(["正文" * 200, "12", "正文延续" * 100])
+        try:
+            results.append(report("T96", "近空延续页 FAIL", False,
+                                  run([SCRIPTS / "layout_gate.py", "--workspace", tws])))
+        finally:
+            _td.cleanup()
+
+        # T97 低填充页 + 下一页顶部为图 caption -> recoverable_underfill FAIL（JSON 断言）
+        _td, tws = _pdf_ws(["正文" * 300, "本页内容很少" * 5,
+                            "图 9：多特征分类性能。 " + "正文" * 200])
+        try:
+            proc = run([SCRIPTS / "layout_gate.py", "--workspace", tws])
+            rec = json.loads((tws / "reports" / "gates" / "layout_gate.json").read_text(encoding="utf-8"))
+            triggered = any(c.get("id") == "recoverable_underfill" and c["status"] == "FAIL"
+                            for c in rec["checks"])
+            results.append(report("T97", "float 诱导欠填充 FAIL", not triggered, proc,
+                                  "" if triggered else "underfill 未触发"))
+        finally:
+            _td.cleanup()
+
+        # T99 首次引用"表 5"在第 1 页（低填充）、表 5 caption 在第 2 页 -> first_reference_gap FAIL
+        _td, tws = _pdf_ws(["如表 5 所示。" + "正文" * 400, "表 5：分组阈值。" + "正文" * 200])
+        try:
+            proc = run([SCRIPTS / "layout_gate.py", "--workspace", tws])
+            rec = json.loads((tws / "reports" / "gates" / "layout_gate.json").read_text(encoding="utf-8"))
+            triggered = any(c.get("id") == "first_reference_gap" and c["status"] == "FAIL"
+                            for c in rec["checks"])
+            results.append(report("T99", "首次引用 float 断裂 FAIL", not triggered, proc,
+                                  "" if triggered else "first_reference_gap 未触发"))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T95-T99 缺少 PyMuPDF")
+
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

@@ -204,7 +204,7 @@ class Gate:
         self.fails = []
         self.warns = []
         self.coverage = {"pdf": False, "source_refs": False, "freshness": False,
-                         "fig_text_size": False, "page_fill": False}
+                         "fig_text_size": False, "page_fill": False, "composition": False}
 
     def add(self, cid, status, message):
         self.checks.append({"id": cid, "status": status, "message": message})
@@ -228,6 +228,7 @@ class Gate:
         self.add("page_count", "PASS", f"{doc.page_count} 页")
         bad, blank, near, bottom, low_fill, high_fill = [], [], [], [], [], []
         fills = []
+        pages_info = []
         for i, page in enumerate(doc):
             if abs(page.rect.width - A4_W) > SIZE_TOL or abs(page.rect.height - A4_H) > SIZE_TOL:
                 bad.append(i + 1)
@@ -249,11 +250,14 @@ class Gate:
                     bottom.append(i + 1)
             ratio, max_gap = page_fill_ratio(page, FILL_TOP_MARGIN, FILL_BOTTOM_MARGIN)
             fills.append(ratio)
+            pages_info.append({"n": i + 1, "text": text, "fill": ratio,
+                               "imgs": len(page.get_images(full=True))})
             area_h = A4_H * (1 - FILL_TOP_MARGIN - FILL_BOTTOM_MARGIN)
             if ratio < PAGE_FILL_LOW_WARN or max_gap > PAGE_FILL_GAP_WARN * area_h:
                 low_fill.append((i + 1, round(ratio, 3), round(max_gap, 1)))
             elif ratio > PAGE_FILL_HIGH_WARN:
                 high_fill.append((i + 1, round(ratio, 3)))
+        self.composition_checks(pages_info)
         doc.close()
         self.add("page_size", "FAIL" if bad else "PASS",
                  f"异常页面 {bad}" if bad else f"全部页面 A4（{A4_W}x{A4_H}pt）")
@@ -274,7 +278,91 @@ class Gate:
         else:
             self.add("page_fill", "PASS", fill_msg)
 
-    # ---- LaTeX 源适配器 ----
+    # ---- v4.3 Final Page Composition Integrity（§29A / T95-T99） ----
+    def composition_checks(self, pages_info):
+        """摘要/关键词孤儿溢出、近空延续页、可恢复欠填充、float 诱导空白、首次引用断裂。"""
+        if not pages_info:
+            return
+        self.coverage["composition"] = True
+        n = len(pages_info)
+        by_n = {p["n"]: p for p in pages_info}
+
+        # T95/T96：摘要+关键词同页；任意近空延续页/孤立标题页 -> FAIL
+        ab = next((p for p in pages_info if "摘要" in p["text"]), None)
+        kw = next((p for p in pages_info if "关键词" in p["text"]), None)
+        if ab is not None and kw is not None:
+            if kw["n"] != ab["n"]:
+                self.add("orphan_text_spill", "FAIL",
+                         f"关键词（第 {kw['n']} 页）未与摘要（第 {ab['n']} 页）同页——"
+                         f"摘要+关键词必须完整落在同一页（T95）")
+            elif kw["n"] + 1 <= n and len(by_n[kw["n"] + 1]["text"].strip()) < 120:
+                self.add("orphan_text_spill", "FAIL",
+                         f"关键词位于第 {kw['n']} 页，下一页（{kw['n'] + 1}）为近空延续页"
+                         f"（{len(by_n[kw['n'] + 1]['text'].strip())} 字符）——关键词尾部单独溢出（T95）")
+        elif ab is not None and kw is None:
+            self.add("orphan_text_spill", "WARN", "找到摘要页但未找到『关键词』标记——关键词缺失或导出异常")
+
+        near_empty_pages = []
+        for p in pages_info:
+            if p["n"] in (1, n):
+                continue
+            if "参考文献" in p["text"]:
+                continue
+            if len(p["text"].strip()) < 120:
+                near_empty_pages.append(p["n"])
+        if near_empty_pages:
+            self.add("near_empty_continuation", "FAIL",
+                     f"近空/孤立延续页 {near_empty_pages}（<120 字符且非末页/非参考文献）——"
+                     f"一行/一词/孤立标题单独占页（T96）")
+
+        # T97/T98：低填充页 + 下一页顶部为图/表对象 -> 可回收空白
+        underfill = []
+        float_head = re.compile(r"^(图|表)\s*\d+")
+        for p in pages_info[:-1]:
+            nxt = pages_info[p["n"]]
+            nxt_text = nxt["text"].strip()
+            nxt_is_float = bool(float_head.match(nxt_text)) or \
+                           (nxt["imgs"] > 0 and len(nxt_text) < 400)
+            if p["fill"] < 0.40:
+                underfill.append((p["n"], p["fill"], nxt_is_float, "fill<0.40"))
+            elif p["fill"] < PAGE_FILL_LOW_WARN and nxt_is_float:
+                underfill.append((p["n"], p["fill"], nxt_is_float, f"下一页对象 {nxt_text[:24]}"))
+        if underfill:
+            self.add("recoverable_underfill", "FAIL",
+                     f"可恢复欠填充页：{[(u[0], round(u[1], 2), u[3]) for u in underfill]}——"
+                     f"空白主要由 float/keep-together/不可拆对象造成，应先内容重排/float 策略/"
+                     f"构造规则（T97/T98）")
+
+        # T99：首次引用与对象 placement 断裂
+        first_ref = None
+        obj_page = {}
+        for p in pages_info:
+            for m in re.finditer(r"图\s*(\d+)\s*[：:·.．]", p["text"]):
+                obj_page.setdefault(("fig", int(m.group(1))), p["n"])
+            for m in re.finditer(r"表\s*(\d+)\s*[：:·.．]", p["text"]):
+                obj_page.setdefault(("tab", int(m.group(1))), p["n"])
+        for p in pages_info:
+            for m in re.finditer(r"(?:如(?:图|表)|(?:图|表)\s*\d+[^。；]{0,6}所示|见(?:图|表))\s*(\d+)", p["text"]):
+                kind = "tab" if "表" in m.group(0) else "fig"
+                key = (kind, int(m.group(1)))
+                if key in obj_page:
+                    first_ref = (p["n"], key, obj_page[key])
+                    break
+            if first_ref:
+                break
+        if first_ref:
+            kr, key, ko = first_ref
+            gap = ko - kr
+            if gap > 1:
+                self.add("first_reference_gap", "WARN",
+                         f"首次引用 {key}（第 {kr} 页）与实际位置（第 {ko} 页）相距 {gap} 页——"
+                         f"阅读断裂，建议就近放置（T99）")
+            elif gap == 1 and by_n[kr]["fill"] < PAGE_FILL_LOW_WARN:
+                self.add("first_reference_gap", "FAIL",
+                         f"首次引用 {key} 于第 {kr} 页（填充 {by_n[kr]['fill']:.0%}），对象被推到第 {ko} 页——"
+                         f"明显可同页却被 float 策略推走（T99）")
+
+
     def latex_sources(self):
         entry = Path(self.entry)
         if not entry.is_absolute():
