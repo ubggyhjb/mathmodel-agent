@@ -689,6 +689,8 @@ def main():
         zpath = sub / "支撑材料.zip"
         with _zip.ZipFile(zpath, "w") as z:
             for rel, content in files.items():
+                if content is None:
+                    continue
                 z.writestr(rel, content if isinstance(content, str) else content.read_bytes())
         return zpath
 
@@ -1654,6 +1656,158 @@ def main():
                               run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
     finally:
         _td.cleanup()
+
+    # ============ v4.3 support registry regression（T82-T89，任务书 v4.3 §10/P0-07） ============
+
+    def _support_ws(zip_files, paper_tex="", workspace_files=None):
+        _td = tempfile.TemporaryDirectory()
+        tws = Path(_td.name)
+        if workspace_files:
+            for rel, content in workspace_files.items():
+                p = tws / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content, encoding="utf-8")
+        (tws / "paper").mkdir(exist_ok=True)
+        (tws / "paper" / "main.tex").write_text(paper_tex or "支撑材料见附录 A。\n",
+                                                encoding="utf-8")
+        make_support_zip(tws, zip_files)
+        return _td, tws
+
+    # T82 data_sources.md 写旧 6 篇 / 文献数漂移 -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "references/literature.md": "\n".join(
+            "| ref{} | x |".format(i) for i in range(1, 9)),
+        "references/data_sources.md": "方法学文献见 literature.md（6 篇：Chiu2008/Zhou2015/Kinnings2015/Luo2026/Chawla2002/Wang2025）。\n",
+    })
+    try:
+        results.append(report("T82", "data_sources 文献漂移 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T82.good data_sources 指向唯一登记源 -> PASS
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "references/literature.md": "\n".join("| ref{} | x |".format(i) for i in range(1, 9)),
+        "references/data_sources.md": "方法学文献见 references/literature.md（唯一文献登记源）。\n",
+    })
+    try:
+        results.append(report("T82.good", "data_sources 唯一登记源 PASS", True,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T83 论文附录声明未覆盖包内实际类别 -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n", "run_all.py": "print(1)\n",
+        "code/utils.py": "x\n", "results/r.json": "{}", "figures/f.pdf": "f",
+        "styles/mpl_paper_style.py": "x\n", "repro/VERIFY_SUMMARY.json": "{}",
+    }, paper_tex="支撑材料包含 code/*.py、results/*.json。\n")
+    try:
+        results.append(report("T83", "附录声明未覆盖包内类别 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T84 README "以预置值为准" -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "若重跑与预置值不一致，说明环境差异，以预置值为准比对差异。\n",
+        "requirements.txt": "pandas\n",
+    })
+    try:
+        results.append(report("T84", "README 预置值语义错误 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T85 VERIFY_SUMMARY 有 WARN 但缺 warning_ledger -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "repro/VERIFY_SUMMARY.json": json.dumps({"warns": 3, "fails": 0, "paper_pages": 28}),
+    })
+    try:
+        results.append(report("T85", "WARN 无 ledger FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T85.good ledger 存在且无 open P0/P1 -> PASS
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "repro/VERIFY_SUMMARY.json": json.dumps({"warns": 2, "fails": 0}),
+        "repro/warning_ledger.json": json.dumps({"warnings": [
+            {"id": "layout_w01", "gate": "layout", "message": "x", "status": "fixed", "reason": "修"}]}),
+    })
+    try:
+        results.append(report("T85.good", "WARN ledger 已关 PASS", True,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T86 README 声称完整复现但 reproduction_level != full -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "本包可完整复现论文全部数值与图。\n",
+        "requirements.txt": "pandas\n",
+        "repro/VERIFY_SUMMARY.json": json.dumps({"reproduction_level": "smoke_min"}),
+    })
+    try:
+        results.append(report("T86", "smoke_min 声称 full FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T87 repro/FINAL_MODEL_SPEC 与 authority 不一致 -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "repro/FINAL_MODEL_SPEC.json": json.dumps({"schema_version": 2, "v": 1}),
+        "reports/FINAL_MODEL_SPEC.json": json.dumps({"schema_version": 2, "v": 2}),
+    })
+    try:
+        results.append(report("T87", "spec 双份漂移 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T88 VERIFY_SUMMARY.paper_pages 空但含 PDF -> FAIL
+    _td, tws = _support_ws({
+        "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+        "paper/main.pdf": "x",
+        "repro/VERIFY_SUMMARY.json": json.dumps({"paper_pages": None, "fails": 0}),
+    })
+    try:
+        results.append(report("T88", "paper_pages 缺失 FAIL", False,
+                              run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+    finally:
+        _td.cleanup()
+
+    # T89 AI 报告声称全绑定但 registry 有未绑定 authority -> FAIL
+    try:
+        import fitz as _fitz
+        _td, tws = _support_ws({
+            "README.md": "# 运行说明\n", "requirements.txt": "pandas\n",
+            "results/RESULT_REGISTRY.json": json.dumps({"artifacts": [
+                {"file": "results/p4_best.json", "role": "paper_authority",
+                 "requires_model_spec_binding": True}]}),
+            "results/p4_best.json": json.dumps({"auprc": 0.456}),
+            "AI 工具使用详情.pdf": None,
+        })
+        try:
+            (tws / "提交").mkdir(exist_ok=True)
+            with _fitz.open() as d:
+                pg = d.new_page()
+                pg.insert_text((72, 100), "All results bound to model_spec_sha256.",
+                               fontsize=10)
+                d.save(str(tws / "提交" / "ai_tmp.pdf"))
+            import zipfile as _zf
+            with _zf.ZipFile(tws / "提交" / "支撑材料.zip", "a") as z:
+                z.write(tws / "提交" / "ai_tmp.pdf", "AI 工具使用详情.pdf")
+            results.append(report("T89", "AI 报告声称与事实矛盾 FAIL", False,
+                                  run([SCRIPTS / "submission_package_gate.py", "--workspace", tws, "--check"])))
+        finally:
+            _td.cleanup()
+    except ImportError:
+        print("[SKIP] T89 缺少 PyMuPDF")
 
 
     n_fail = sum(1 for ok in results if not ok)

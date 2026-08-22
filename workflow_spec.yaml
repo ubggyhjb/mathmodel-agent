@@ -107,6 +107,8 @@ gates_pipeline:
   - leakage
   - figure_story
   - idea_contracts
+  - visual_review_gate
+  - figure_spec
 
 final_review:
   personas:
