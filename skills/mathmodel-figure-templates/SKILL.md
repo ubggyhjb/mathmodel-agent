@@ -1,88 +1,94 @@
 ---
 name: mathmodel-figure-templates
-description: Use this skill in the MathModel LaTeX sandbox when the user asks to reproduce built-in scientific visualization templates, especially prompts from the Improve tab mentioning $mathmodel-figure-templates, 科研绘图模板, SHAP蜂群柱状图, 配对云雨图, 交叉验证ROC, 泰勒图, 相关矩阵组合图, 预测真实值边缘分布图, TPE调参3D曲面, 下三角相关矩阵半边小提琴图, 分组环形热图, 城市公园降温组合图, or Nature和弦图. It provides ready-to-run Python scripts bundled inside the skill.
-whenToUse: "数模论文需要炫酷科研绘图（云雨图、泰勒图、ROC、SHAP、和弦图等）时使用。"
+description: "数学建模论文的发表级科学图系统（Publication Scientific Figure System）：严格遵循 Evidence -> Visual Encoding -> Renderer 流程，提供统计图/示意图的可复现渲染模板（matplotlib 样式、TikZ 示意图、R/ggplot2 路由），用于论文 Figure 的最终设计与渲染。不是『炫酷模板库』：禁止先选模板再找数据塞进去。"
+whenToUse: "在 3coding-visual/5writing 阶段需要生成或重制论文正式图（数据图、森林图、ROC/PR、生存曲线、校准、决策曲线、多面板组合、示意图/图形摘要）时使用；或用户要求优化已有论文图的视觉层级、配色语义、排版构图时使用。"
 allowed-tools: pwsh, read, write, edit, grep, glob, subagent, workflow, web_search, ask_user_question
 ---
 
-# MathModel Figure Templates
+# MathModel Publication Scientific Figure System
 
-## 本机论文级图表（Windows/DSH，优先用这节）
+定位（v4.3，任务书 §23）：
 
-上游内容（下方 Fast Path 起）面向 Linux LaTeX 沙箱（/home/user 路径），本机不可直接用。本机出图走两条路：
+> **Evidence → Visual Encoding → Renderer**，绝不能 **Template → 找数据塞进去**。
 
-### 流程图/技术路线图 → TikZ（首选，零安装）
-- 模板在 `tikz/` 目录（本机 xelatex 实测可编译）：
-  - `tikz_flow_vertical.tex` —— 纵向技术路线图（fig_roadmap，三阶段输入→建模→输出骨架）
-  - `tikz_flow_layers.tex` —— 分层架构图（指标体系/模型结构/模块关系）
-  - `tikz_flow_decision.tex` —— 带判断菱形的子问题求解流程（fig_flow_qN）
-- 用法：论文导言区加入 `\usepackage{tikz}` + `\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, shapes.geometric}`（一次即可），把模板中的 `\begin{tikzpicture}...\end{tikzpicture}` 整段复制进正文 `\begin{figure}[H]\centering ... \end{figure}`，改节点文字即可。
-- 为什么选它：图内字体与正文完全一致（ctex 宋体/黑体）、矢量、公式可直接进节点、无需额外软件——这是真国一论文流程图的同款做法。
-- 颜色纪律：黑/深灰 + 至多一种强调色；灰度打印可辨；节点文字短。
+本 skill 不做"炫酷模板图库"（SHAP 蜂群/raincloud/Taylor/3D TPE/circular heatmap 等）——
+那些只有数据形状真正需要时（证据类型匹配）才用；任何图必须先有 `claim` 与 `visual_encoding`。
 
-### 数据图 → matplotlib + 论文风格
-- 绘图脚本开头：
-  ```python
-  import mpl_paper_style as mps   # 位于本 skill 的 scripts/
-  mps.apply()
-  fig, ax = mps.subplots(width_cm=12, aspect=0.75)
-  ...
-  mps.save(fig, "figures/xxx")    # PNG 300dpi + 矢量 PDF
-  ```
-- 要点：SimHei 中文字体、图内字号 8pt（对应正文 12pt）、去顶/右 spine、浅网格、`pdf.fonttype=42`（修复 matplotlib 默认 Type3 导致 xelatex 编译失败的历史问题，矢量 PDF 可直接 \includegraphics）。
+## 流程（每张正式图）
 
-## Fast Path
-
-This skill is bundled into the LaTeX sandbox at `/home/user/.claude/skills/mathmodel-figure-templates`. It contains ready-to-run Python/matplotlib scripts for the figure templates exposed in the MathModel Improve tab.
-
-## Fast Path
-
-1. Match the requested chart in `references/figure-catalog.md`.
-2. From `/home/user/workspace`, run the renderer with the template id:
-
-```bash
-python3 /home/user/.claude/skills/mathmodel-figure-templates/scripts/render_template.py paired-raincloud
+```
+Result / Claim（figure_manifest story.claims）
+   ↓
+Figure Claim（one-line claim）
+   ↓
+Visual Encoding Spec（figure_manifest 唯一事实 + figures/specs/<id>.figure.json）
+   ↓
+Panel Outline（12 列网格；panel role/colspan/label_budget）
+   ↓
+Renderer Routing（R/ggplot2 首选 → Python/matplotlib fallback（显式记录）→ TikZ/SVG）
+   ↓
+Panel Render
+   ↓
+Figure Composition（final-size：final_width_mm）
+   ↓
+Visual Critic（数据保真/label 经济/bbox 碰撞/主次层级，≤3 轮）
+   ↓
+Publication Figure（PDF/SVG 矢量；PNG 仅 review preview）
 ```
 
-3. The renderer copies the bundled template script into `绘图复刻/scripts/`, runs it there, and writes outputs to `绘图复刻/outputs/`.
-4. Return the generated PNG/PDF/SVG paths and the copied script path to the user.
+正式主图必须在 `figures/specs/<id>.figure.json` 声明
+（figure_id/claim_id/figure_role/evidence_type/renderer/layout/visual_encoding/
+label_budget/final_width_mm；T90 门禁强制）。
 
-Use `--list` to show supported ids:
+## 语义配色（角色 = 颜色，非类别索引；跨图同实体同色）
 
-```bash
-python3 /home/user/.claude/skills/mathmodel-figure-templates/scripts/render_template.py --list
+| 角色 | 编码 |
+| --- | --- |
+| primary | 深蓝等强色 |
+| comparators | 灰阶细线 |
+| baseline/random | 浅灰虚线 |
+| alert/risk | 橙红 |
+| 次要强调 | 青绿 |
+
+避免"有四条线就四种颜色"；legend 负担优先用 direct labeling 消解。
+
+## 本机渲染路径
+
+### 示意图/技术路线 → TikZ（零安装，图内字体与正文一致）
+- 模板在 `tikz/`（xelatex 实测可编译）：`tikz_flow_vertical.tex`（纵向路线图）、
+  `tikz_flow_layers.tex`（分层架构）、`tikz_flow_decision.tex`（带判断菱形流程）。
+- 颜色纪律：黑/深灰 + 至多一种强调色；灰度打印可辨；节点文字短、字号 ≥7pt。
+
+### 数据图 → matplotlib 论文风格（Python 后端）
+```python
+import mpl_paper_style as mps   # 本 skill scripts/（支撑包内联 styles/mpl_paper_style.py）
+mps.apply()
+fig, ax = mps.subplots(width_cm=12, aspect=0.75)
+...
+mps.save(fig, "figures/xxx")    # PNG 300dpi + 矢量 PDF
 ```
+要点：中文字体经系统探测（禁止字体绝对路径，T94）、图内字号 8pt（对应正文 12pt）、
+去顶/右 spine、浅网格、`pdf.fonttype=42`；最终宽度 170mm（正文通栏）/84mm（双栏）。
 
-## Output Contract
+### R/ggplot2 首选（当本机有 R 时）
+- 统计图（scatter+smooth+CI / forest / 分布 / ROC-PR / survival / calibration /
+  decision curve / heatmap / multi-panel）首选 `r_ggplot2`，依赖
+  ggplot2/patchwork/ggrepel/ggtext/scales/ggdist/cowplot/svglite/systemfonts。
+- **可复现**：`renv.lock` 必须随项目；renders 前 `renv::restore()`。
+- 无 R：自动 fallback Python **并在 FIGURE_SPEC 记录 `renderer_fallback: python_matplotlib`**，
+  禁止静默切换。
 
-- Work under the current workspace unless the user gives another path.
-- Default project folder: `绘图复刻`.
-- Script path: `绘图复刻/scripts/make_<template>.py`.
-- Outputs: `绘图复刻/outputs/<template>_replica.png`, `.pdf`, `.svg`.
-- Use the bundled scripts as the first choice; edit the copied workspace script only when the user requests customization.
-- The bundled scripts use deterministic simulated data. Do not claim simulated values reproduce a source study exactly.
+## Visual Critic（投稿级检查，≤3 轮）
 
-## Template Ids
+- data fidelity：曲线/点与结果 JSON 一致（figure_story source hash 已管）
+- label economy：label_budget 内；direct labeling > legend
+- 语义配色：primary/comparators/baseline 层阶（T92）
+- final-size render QA：bbox collision、面板严重失衡、文字溢出、有效字号 ≥7pt
+- 观感（层级/平衡/留白/阅读顺序）交给 Reviewer C/visual subagent 结构化裁决
+  （page_visual_review.json），本 skill 只做确定性检查。
 
-- `multiclass-shap-combo`
-- `paired-raincloud`
-- `cv-roc-ci`
-- `taylor-diagram`
-- `correlation-pairgrid`
-- `prediction-marginal-grid`
-- `rf-tpe-surface`
-- `grouped-corr-split-violin`
-- `grouped-circular-heatmap`
-- `urban-park-cooling-combo`
-- `nature-chord-diagram`
+## 参考
 
-## When Customizing
-
-If the user asks for changes, copy/run the nearest template first, then edit the copied file in `绘图复刻/scripts/`. Preserve:
-
-- `MPLCONFIGDIR` before importing matplotlib.
-- deterministic seeds for simulated data.
-- PNG/PDF/SVG export.
-- readable labels, legends, and high-DPI output.
-
-Use `references/plot-recipes.md` for implementation patterns.
+- `references/figure-catalog.md`：证据类型 → 推荐 chart（按数据形状选型，禁止按模板选型）
+- `references/plot-recipes.md`：配方级示例
+- `docs/FIGURE_SPEC.schema.md`（仓库 docs/）：FIGURE_SPEC 字段定义

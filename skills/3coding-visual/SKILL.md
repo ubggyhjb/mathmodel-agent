@@ -152,3 +152,25 @@ AI 在实现、求解和作图过程中，必须把关键中间过程保存成�
 图表可以由主程序或独立脚本生成，不强制固定脚本名。无论采用哪种方式，都必须保存图表对应的数据来源和生成记录。
 
 **作图脚本禁硬编码结果值（2026-08 补丁）**：图内所有数字必须从 `results/*.json` 读取，禁止把论文数值硬编码进作图脚本；改模型重跑后，先 grep `code/` 清理被替换的旧值，再重跑作图脚本（历史教训：make_figures 残留旧时点 `16.6/17.4/20.0` 硬编码，盲评扫到即判"图与结果不同步"）。
+
+### Step 4b: 科学图流程（v4.3，任务书 §20-27/§35.8）
+
+本阶段正式引入 **Figure Narrative → Visual Encoding → Renderer Routing → Figure Composition → Visual Critic** 五步：
+
+1. **Figure Narrative**：每张正式图先写 one-line claim（来自 figure_manifest story.claims 的
+   result_key+predicate），并按论文叙事（problem → key evidence → modeling logic →
+   decision/result）安排图序；写 `reports/PAPER_NARRATIVE.json`（hook_verdict /
+   figure_moves / missing_panels / kill_list / primary_figure_claims）。
+2. **Visual Encoding**：主 result 强色（深蓝）、comparators 灰阶、baseline 浅灰虚线、
+   alert 橙红——颜色表示角色/语义，不是类别索引（T92）。
+3. **Renderer Routing**：统计图首选 R/ggplot2（有 R 时），本机无 R 用 Python/matplotlib 并
+   在 FIGURE_SPEC 记录 `renderer_fallback`（禁止静默切换）；schematic 用 TikZ/SVG。
+4. **Figure Composition**：`figures/specs/<id>.figure.json` 声明 12 列网格/panel role/label_budget/
+   final_width_mm——先有 composition 规划再渲染，禁止"analysis plots 横排"式拼图。
+5. **Visual Critic**：确定性检查（bbox 碰撞/溢出/有效字号）由 layout 门做；层级/平衡/留白/
+   阅读顺序/主证据突出度交给 Reviewer C 结构化裁决（page_visual_review.json），
+   单图 ≤3 轮迭代。
+
+正式主图（manifest visual_priority=primary）必须有 FIGURE_SPEC（figure_spec_gate T90）。
+schematic 由 4drawio 负责（TikZ），本阶段不生成概念图。
+

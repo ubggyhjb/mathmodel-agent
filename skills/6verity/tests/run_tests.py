@@ -1569,6 +1569,92 @@ def main():
     except ImportError:
         print("[SKIP] T100-T103 缺少 PyMuPDF")
 
+    # ============ v4.3 scientific figure system regression（T90-T94，任务书 v4.3 §25-27） ============
+
+    def _fig_spec_ws(manifest_pri="primary", spec=None, with_code=None):
+        _td = tempfile.TemporaryDirectory()
+        tws = Path(_td.name)
+        (tws / "figures" / "specs").mkdir(parents=True)
+        json_write(tws / "figures" / "figure_manifest.json",
+                   [{"id": "fig_q1", "visual_priority": manifest_pri,
+                     "files": ["figures/fig_q1.pdf"], "status": "approved"}])
+        if spec is not None:
+            json_write(tws / "figures" / "specs" / "fig_q1.figure.json", spec)
+        if with_code is not None:
+            (tws / "code").mkdir(exist_ok=True)
+            (tws / "code" / "make_figures.py").write_text(with_code, encoding="utf-8")
+        return _td, tws
+
+    _SPEC_OK = {"figure_id": "fig_q1", "claim_id": "Q1.PRIMARY", "figure_role": "primary",
+                "evidence_type": "longitudinal_effect", "renderer": "python_matplotlib",
+                "layout": {"grid_columns": 12, "panels": [{"id": "A", "role": "primary", "colspan": 7}]},
+                "visual_encoding": {"primary": "strong_color_dark_blue",
+                                    "comparators": "gray", "baseline": "light_gray_dashed"},
+                "label_budget": 8, "final_width_mm": 170}
+
+    # T90 primary 图缺 FIGURE_SPEC -> FAIL
+    _td, tws = _fig_spec_ws()
+    try:
+        results.append(report("T90", "primary 图缺 FIGURE_SPEC FAIL", False,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T90.good 完整 FIGURE_SPEC -> PASS
+    _td, tws = _fig_spec_ws(spec=_SPEC_OK)
+    try:
+        results.append(report("T90.good", "FIGURE_SPEC 齐全 PASS", True,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T92 primary/comparators 等权重彩色 -> WARN（exit 0，report 断言）
+    _td, tws = _fig_spec_ws()
+    try:
+        spec = dict(_SPEC_OK)
+        spec["visual_encoding"] = {"primary": "blue", "comparators": ["orange", "green"],
+                                   "baseline": "purple_dashed"}
+        json_write(tws / "figures" / "specs" / "fig_q1.figure.json", spec)
+        proc = run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])
+        rec = json.loads((tws / "reports" / "gates" / "figure_spec_gate.json").read_text(encoding="utf-8"))
+        triggered = any(c.get("level") == "WARN" and "语义层级" in c.get("message", "")
+                        for c in rec["findings"])
+        results.append(report("T92", "等权重彩色编码 WARN", triggered, proc,
+                              "" if triggered else "语义层级 WARN 未触发"))
+    finally:
+        _td.cleanup()
+
+    # T93 renderer=r_ggplot2 且缺 renv.lock -> FAIL
+    _td, tws = _fig_spec_ws()
+    try:
+        spec = dict(_SPEC_OK)
+        spec["renderer"] = "r_ggplot2"
+        json_write(tws / "figures" / "specs" / "fig_q1.figure.json", spec)
+        results.append(report("T93", "r_ggplot2 缺 renv.lock FAIL", False,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T93.good 有 renv.lock -> PASS
+    _td, tws = _fig_spec_ws()
+    try:
+        spec = dict(_SPEC_OK)
+        spec["renderer"] = "r_ggplot2"
+        json_write(tws / "figures" / "specs" / "fig_q1.figure.json", spec)
+        (tws / "renv.lock").write_text("{}", encoding="utf-8")
+        results.append(report("T93.good", "renv.lock 可复现 PASS", True,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
+    # T94 脚本引用本机字体绝对路径 -> FAIL
+    _td, tws = _fig_spec_ws(with_code='font_manager.addfont(r"C:\\Users\\Administrator\\AppData\\Fonts\\simsun.ttf")\n')
+    try:
+        results.append(report("T94", "本机字体绝对路径 FAIL", False,
+                              run([SCRIPTS / "figure_spec_gate.py", "--workspace", tws, "--strict"])))
+    finally:
+        _td.cleanup()
+
 
     n_fail = sum(1 for ok in results if not ok)
     suffix = f"（{len(skipped)} 项跳过：{'、'.join(skipped)}）" if skipped else ""

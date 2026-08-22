@@ -100,6 +100,9 @@ def gate_specs(ws: Path, strict: bool, skip: set):
         ("visual_review_gate", scripts / "visual_review_gate.py",
          ["--workspace", str(ws), "--root", str(wfs.repo_root(Path(__file__).resolve().parent)),
           *strict_args], "reports/gates/visual_review_gate.json"),
+        # v4.3（§25-27/T90-T94）：科学图系统门——FIGURE_SPEC/语义配色/renv/字体路径
+        ("figure_spec", scripts / "figure_spec_gate.py",
+         ["--workspace", str(ws), *strict_args], "reports/gates/figure_spec_gate.json"),
         # v4.2（9.1/9.2）：verification 强制 substage——部署效用审计 + 提交包审计
         ("deployment_utility", scripts / "deployment_utility.py",
          ["--workspace", str(ws), *strict_args], "reports/deployment_utility.json"),
@@ -153,7 +156,7 @@ def semantic_problems(name, result, ws):
         if doc is None:
             problems.append("verify_refs 未产出 JSON 报告")
     elif name in ("methodology", "leakage", "figure_story", "text_integrity", "idea_contracts",
-                  "visual_review_gate"):
+                  "visual_review_gate", "figure_spec"):
         if doc is None:
             problems.append(f"{name} 未产出 JSON 报告")
     return problems
