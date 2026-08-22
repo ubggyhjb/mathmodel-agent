@@ -510,3 +510,11 @@ xelatex main.tex && xelatex main.tex
 \textbf{问题一：} xxx   % 对应 Typst 的 #strong
 ```
 
+
+
+## v4.4 交叉引用与 score 语义
+
+- 跨图/跨表引用一律 stable figure id + `\ref` 编译期映射；caption 禁止硬编码当前编号（T113）。
+- 未校准模型输出在全链（论文/结果/注释/caption/README）统一为 score s(x)/阈值 τ；
+  禁用"概率阈值/预测概率/\hat p"（否定语境与 `predict_proba` API 豁免，T112）。
+- 模型称谓：role=primary 且非性能最优选择时，写"主模型"，禁止"最优模型"。

@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "result_registry.v1",
+  "type": "object",
+  "required": ["schema_version", "artifacts"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["file", "role", "problem_id", "generator", "requires_model_spec_binding"],
+        "properties": {
+          "file": {"type": "string", "pattern": "^results/"},
+          "role": {"type": "string",
+                   "enum": ["paper_authority", "model_output", "figure_source", "diagnostic",
+                            "external_registry", "support"]},
+          "problem_id": {"type": "string", "minLength": 1},
+          "generator": {"type": "string"},
+          "requires_model_spec_binding": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

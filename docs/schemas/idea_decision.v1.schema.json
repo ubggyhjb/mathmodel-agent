@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "idea_decision.v1",
+  "type": "object",
+  "required": ["schema_version", "primary", "accepted"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "primary": {
+      "type": "object",
+      "patternProperties": {"^Q[0-9A-Za-z_]+$": {"type": "string", "minLength": 1}},
+      "additionalProperties": {"type": "string"}
+    },
+    "accepted": {"type": "array", "items": {"type": "string"}},
+    "rejected": {"type": "array", "items": {"type": "string"}},
+    "baseline": {"type": "array", "items": {"type": "string"}},
+    "backup": {"type": "array", "items": {"type": "string"}},
+    "exploratory": {"type": "array", "items": {"type": "string"}},
+    "rejection_reasons": {"type": ["object", "null"]}
+  }
+}

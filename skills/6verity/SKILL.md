@@ -472,3 +472,13 @@ PASS（档位：提交线 62–69 / 真国一观察范围 ≥70，本表口径�
 - 视觉检查工具不可用，但已经记录原因并完成基础 PDF 元数据检查。
 - 代码完整复现耗时过长，只做了轻量检查。
 
+
+
+## v4.4 门禁清单（单一事实源）
+
+- 门禁执行列表以 `workflow_spec.yaml` 的 `gates:` registry 为唯一事实源（16 门，含
+  schema_validation）；`run_all_gates.py` 只解析该表，禁止硬编码（T117 静态检查）。
+- 视觉评审：逐页 `page_records`（gate 计算 coverage，不接受 self-declared boolean）；
+  BLOCKER/CRITICAL → veto；MAJOR → 必须 fixed_and_rereviewed 或显式 waiver（T115/T116）。
+- 时间 provenance：`event_at/recorded_at/evidence_type` 三概念；recorded_at 只允许系统时钟。
+- regression：T110–T123 覆盖 v4.4 全部反 false-pass 场景（bad FAIL / fixed PASS）。

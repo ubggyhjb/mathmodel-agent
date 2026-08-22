@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "final_model_spec.v2",
+  "description": "v4.3 schema v2 最终模型契约（v4.4：机器 Schema，docs/FINAL_MODEL_SPEC.schema.md 只作解释）",
+  "type": "object",
+  "required": ["schema_version", "contract_rev", "problems"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 2},
+    "contract_rev": {"type": "integer", "minimum": 1},
+    "generated_at": {"type": "string"},
+    "problems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["problem_id", "analysis_unit", "outcome", "observation_mechanism",
+                      "model", "features", "selection", "uncertainty", "prediction_output",
+                      "likelihood", "result_keys", "figure_ids", "paper_section"],
+        "properties": {
+          "problem_id": {"type": "string", "minLength": 1},
+          "analysis_unit": {"type": "string"},
+          "outcome": {"type": "object", "required": ["id", "type", "unit"]},
+          "observation_mechanism": {
+            "type": "object",
+            "properties": {
+              "left_censoring": {"type": "boolean"},
+              "interval_censoring": {"type": "boolean"},
+              "right_censoring": {"type": "boolean"},
+              "truncation": {"type": "boolean"}
+            }
+          },
+          "model": {
+            "type": "object",
+            "required": ["family", "role"],
+            "properties": {
+              "family": {"type": "string", "minLength": 1},
+              "distribution": {"type": ["string", "null"]},
+              "role": {"type": "string",
+                        "enum": ["primary", "primary_decision", "baseline", "secondary", "support"]}
+            }
+          },
+          "features": {
+            "type": "object",
+            "required": ["feature_set_id"],
+            "properties": {"feature_set_id": {"type": "string", "minLength": 1}}
+          },
+          "selection": {"type": ["object", "null"]},
+          "uncertainty": {"type": ["object", "null"]},
+          "prediction_output": {
+            "type": ["object", "null"],
+            "properties": {
+              "type": {"type": "string", "enum": ["uncalibrated_score", "calibrated_probability", "none"]},
+              "probability_interpretation_allowed": {"type": "boolean"}
+            }
+          },
+          "likelihood": {"type": ["string", "null"]},
+          "result_keys": {"type": "array", "items": {"type": "string"}},
+          "figure_ids": {"type": "array", "items": {"type": "string"}},
+          "paper_section": {"type": "string"}
+        }
+      }
+    }
+  }
+}

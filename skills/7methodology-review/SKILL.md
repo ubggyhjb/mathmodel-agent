@@ -259,3 +259,13 @@ python skills/6verity/scripts/attack_questions.py --workspace .
 
 - Step 1–8 任何一项审计不通过（删失未分类、假设矛盾、退化未检测、必要性未分类、泄露未登记、样本量未核查）→ 回 `2analysis-modeling` 修正建模口径后再重跑本 skill。
 - Step 9 的三门禁任一 FAIL → 修正后重跑，禁止带病进入 `3coding-visual`。
+
+
+## v4.4 家族选择与时间纪律
+
+- algorithm_family_selection 的 allowed_data ∈ {inner_cv, pre_specified}；pre_specified 时
+  结果文件必须携带 `selection_mode`/`runtime_selection_events`（空表）——运行时出现
+  "候选+外测指标+argmax 选家族"即 FAIL（T110）。
+- baseline 超参协议（inner-tuned 或 fixed）必须与代码/论文三处一致（T111）。
+- 决策时间三概念：event_at（历史声称）/recorded_at（系统时钟）/evidence_type；
+  prospective 必须不可变证据，事后补录只能叫 reconstructed_posthoc（T123）。

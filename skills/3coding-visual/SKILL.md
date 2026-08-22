@@ -174,3 +174,13 @@ AI 在实现、求解和作图过程中，必须把关键中间过程保存成�
 正式主图（manifest visual_priority=primary）必须有 FIGURE_SPEC（figure_spec_gate T90）。
 schematic 由 4drawio 负责（TikZ），本阶段不生成概念图。
 
+
+
+## v4.4 结果写入与渲染证据
+
+- 模型结果统一 `save_result(...)`（或 add_meta 步骤）原子写入 `_meta`
+  （generated_at 用系统时钟；禁止 mtime 伪装 pre-spec）。
+- 渲染器声明必须与执行一致：R/ggplot2 图须产出 `repro/RENDER_PROVENANCE.json`
+  （declared/actual/fallback_reason/script+lock+output sha）与 `renv.lock`；
+  无 R 环境显式 fallback 记录（T118/T119）。
+- FigureBuilder/渲染脚本产生的 figure meta 由可交付生成器写入（禁止一次性临时脚本）。

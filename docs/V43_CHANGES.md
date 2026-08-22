@@ -108,7 +108,7 @@
 ## v4.3 补遗：R/ggplot2 落地（§21/§22）
 
 - **R 4.6.1 已接入**（用户侧安装，E:\R-4.6.1；Rscript 经 PATH/环境变量 RSCRIPT 探测，禁止本机绝对路径）：
-  R/ 目录（theme_mathmodel.R 8pt 主题 + palette_mathmodel.R 语义配色 + save_figure.R 矢量/PNG 输出 +
+  R/ 目录（theme_mathmodel.R 8pt 主题 + palette_mathmodel.R 语义配色 + save_figure() 定义于 theme_mathmodel.R 尾部；矢量/PNG 输出 +
   plots/fig_q3_effects.R·fig_q4_roc.R）+ 
 env.lock（R 版本 + 13 包版本，等价恢复）。
 - NIPT 图 7（AFT 森林图）/图 9（ROC）正式渲染器 = **r_ggplot2**（同源 results/*.json 数据、语义层级配色、

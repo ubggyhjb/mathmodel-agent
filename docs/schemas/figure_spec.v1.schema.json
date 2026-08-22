@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "figure_spec.v1",
+  "type": "object",
+  "required": ["figure_id", "claim_id", "figure_role", "evidence_type", "renderer",
+                "layout", "visual_encoding", "label_budget", "final_width_mm"],
+  "properties": {
+    "figure_id": {"type": "string", "minLength": 1},
+    "claim_id": {"type": "string", "minLength": 1},
+    "figure_role": {"type": "string", "enum": ["primary", "secondary", "appendix"]},
+    "evidence_type": {"type": "string"},
+    "renderer": {"type": "string", "enum": ["python_matplotlib", "r_ggplot2", "tikz",
+                                            "svg_inkscape", "auto"]},
+    "renderer_fallback": {"type": ["string", "null"]},
+    "layout": {"type": "object", "required": ["grid_columns", "panels"]},
+    "visual_encoding": {"type": "object"},
+    "label_budget": {"type": "integer", "minimum": 0},
+    "final_width_mm": {"type": ["number", "null"]},
+    "direct_labeling": {"type": ["boolean", "null"]}
+  }
+}
